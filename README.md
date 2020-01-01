@@ -1,0 +1,2 @@
+# anomapy
+anomaly detection library
