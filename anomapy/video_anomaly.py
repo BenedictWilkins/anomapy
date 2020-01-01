@@ -1,17 +1,8 @@
 
 import numpy as np 
 import torch
-import pyworld.toolkit.tools.gymutils as gu
+
 import pyworld.toolkit.tools.datautils as du
-import pyworld.toolkit.tools.torchutils as tu
-import pyworld.toolkit.tools.visutils as vu
-import pyworld.toolkit.tools.fileutils as fu
-
-import pyworld.toolkit.tools.debugutils as debug
-
-import cv2
-import matplotlib.pyplot as plt
-import copy
 
 def freeze(episode, ratio=0.1, freeze_for=(4,16)):
     '''
@@ -26,6 +17,8 @@ def freeze(episode, ratio=0.1, freeze_for=(4,16)):
             episode, normal index, anomaly index
     '''
     assert freeze_for[0] < freeze_for[1]
+
+    episode = np.copy(episode)
 
     size = int(ratio * episode.shape[0])
     a_indx = np.sort(np.random.choice(episode.shape[0], size=size, replace=False)) + 1
@@ -59,6 +52,8 @@ def freeze_skip(episode, ratio=0.1, freeze_for=(4,16)):
     '''
     assert freeze_for[0] < freeze_for[1]
     
+    episode = np.copy(episode)
+
     size = int(ratio * episode.shape[0])
     a_indx = np.sort(np.random.choice(episode.shape[0], size=size, replace=False))
     freeze_for = np.random.randint(low=freeze_for[0], high=freeze_for[1], size=a_indx.shape[0])
@@ -68,10 +63,6 @@ def freeze_skip(episode, ratio=0.1, freeze_for=(4,16)):
         episode[a_indx[i]:a_indx[i] + freeze_for[i]] = freeze_frames[i]
     
     return episode, du.invert(a_indx, episode.shape[0]), a_indx #TODO? should freeze frame also be considered anomalies?
-    
-    
-def fade(episode, ratio=0.1):
-    raise NotImplementedError("TODO!")
     
 def split_horizontal(episode, ratio=0.1):
     return split(episode, ratio=ratio, vertical=False, horizontal=True)
@@ -92,19 +83,23 @@ def split(episode, ratio=0.1, vertical=False, horizontal=True):
     '''
     assert vertical or horizontal
     
+    episode = np.copy(episode)
+
     size = int(ratio * episode.shape[0]) 
     indx = np.random.choice(episode.shape[0], size=size, replace=False)
     indx = np.concatenate((indx[:,np.newaxis], np.random.randint(0, episode.shape[0], indx.shape[0])[:,np.newaxis]), axis=1)
-    
+
     if vertical:
-        iv = int(episode.shape[2]/2)
+        i = int(episode.shape[-1]/2)
+        slice = [np.s_[i:], np.s_[:i]]
         for i1, i2 in indx:
-            episode[i1,:,:,:iv] = episode[i2,:,:,:iv]
+            episode[i1,:,:,slice[np.random.randint(0,2)]] = episode[i2,:,:,slice[np.random.randint(0,2)]]
     if horizontal:
-        ih = int(episode.shape[3]/2)
+        i = int(episode.shape[-2]/2)
+        slice = [np.s_[i:], np.s_[:i]]
         for i1, i2 in indx:
-            episode[i1,:,:ih,:] = episode[i2,:,:ih,:]
-    
+            episode[i1,:,slice[np.random.randint(0,2)],:] = episode[i2,:,slice[np.random.randint(0,2)],:]
+
     anom_indx = indx[:,0]
     normal_indx = du.invert(anom_indx, episode.shape[0])
     
@@ -115,21 +110,51 @@ def block(episode, ratio=0.1):
         Fills a (m x n) region of the state with a random colour. n and m are determined randomly.
 
         Arguments:
-            episode: to generate anomalies in (a copy will be made)
+            episode: NCHW format to generate anomalies in (a copy will be made). 
             ratio: of anomalous to normal examples i.e. ratio * len(episode) anomalies will be generated
         Returns:
             episode, normal index, anomaly index
     '''
+    episode = np.copy(episode)
+
     size = int(ratio * episode.shape[0]) 
     anom_indx = np.random.choice(episode.shape[0], size=size, replace=False)
+
+    if np.max(episode) > 1:
+        random = lambda: np.random.randint(0,256)
+    else:
+        random = lambda: np.random.uniform()
     
     for i in anom_indx:
-        y1, y2 = np.random.randint(0, episode.shape[2], size=2)
-        x1, x2 = np.random.randint(0, episode.shape[3], size=2)
+        y1, y2 = np.random.randint(0, episode.shape[-2], size=2)
+        x1, x2 = np.random.randint(0, episode.shape[-1], size=2)
         for j in range(episode.shape[1]):
-            episode[i,j,min(y1, y2):max(y1, y2),min(x1, x2):max(x1, x2)] = np.random.uniform(low=0.0, high=1.0)
+            episode[i,j,min(y1, y2):max(y1, y2),min(x1, x2):max(x1, x2)] = random()
         
     normal_indx = du.invert(anom_indx, episode.shape[0])
     return episode, normal_indx, anom_indx
 
 
+
+if __name__ == "__main__":
+
+
+
+    import pyworld.toolkit.tools.gymutils as gu
+    import pyworld.toolkit.tools.fileutils as fu
+    import pyworld.toolkit.tools.visutils as vu
+
+    env = 'SpaceInvadersNoFrameskip-v4/'
+    write_path = '~/Documents/repos/datas/atari/anomaly/' + env
+    read_path = '~/Documents/repos/datasets/atari/' + env
+
+    anomalies = [block, freeze, freeze_skip,
+                split_horizontal, split_vertical]
+
+    files = [file for file in fu.files(read_path, full=True)]
+    episode = fu.load(files[0])['state'][...] #convert to CHW format
+    episode = vu.transform.CHW(episode)
+
+    for anom in anomalies:
+        a_episode, n_indx, a_indx = anom(episode)
+        vu.play(a_episode, name = anom.__name__)
