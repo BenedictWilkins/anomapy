@@ -14,7 +14,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from anomapy import load
+import argparse
+from pprint import pprint
+
+from .. import load
 
 from pyworld.toolkit.tools.wbutils import WB
 
@@ -23,65 +26,87 @@ def load_mnist():
     x_train, _, x_test, _ = du.mnist()
     return torch.from_numpy(x_train), torch.from_numpy(x_test), x_train.shape[1:]
 
-#TODO_ENVIRONMENTS = [BREAKOUT, ENDURO, PONG, QBERT, SEAQUEST, SPACEINVADERS]]
- 
-env = load.BREAKOUT
+if __name__ == "__main__":
 
-#read_path = '~/Documents/repos/datasets/atari/' + env + load.NO_FRAME_SKIP + "/"
-
-train_path = load.path_train(env)
-files = [file for file in fu.files(train_path, full=True)]
-episode, input_shape = load.load_all(*files[:-1], **load.HYPER_PARAMETERS[env], max_size = 25000)
-
-test, input_shape = load.load(files[-1], **load.HYPER_PARAMETERS[env])
-
-test = torch.from_numpy(test)
-episode = torch.from_numpy(episode)
-
-latent_shape = 256
-device = tu.device()
-
-encoder, decoder = AE.default2D(input_shape, latent_shape)
-model = AE.AE(encoder, decoder).to(device)
-optim = AEOptimiser(model) #bce/wl?
-
-epochs = 1
-batch_size = 64
-
-config = {'environment':env, 'latent_shape':latent_shape, 'batch_size':batch_size, 'epochs':epochs, 'dataset_size':episode.shape[0], **load.HYPER_PARAMETERS[env]}
-
-wb = WB('anomapy', model, config=config)
-step = 0
-with wb:
-    for e in range(epochs):
-        for i, batch in enumerate(du.batch_iterator(episode, batch_size=batch_size, shuffle=True)):
-            optim(batch)
-            step = wb.step()
-            if step % 100:
-                wb(**optim.cma.recent())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-env", type=str, required=True)    
+    parser.add_argument("-latent_size", type=int, default=256)
+    parser.add_argument("-epochs", type=int, default=50)
+    parser.add_argument("-batch_size", type=int, default=64)
+    parser.add_argument("-dataset_size", type=int, default=None) #use all data
+    parser.add_argument("-device", type=str, default = tu.device())    
         
-        indx = np.random.randint(0, test.shape[0])
-        real = tu.to_numpy(test[indx])
-        recon = tu.to_numpy(F.sigmoid(model(test[indx][np.newaxis,...])))[0]
-        image = wb.image(np.concatenate((real, recon), axis=2), "reconstruction")
-        wb(reconstruction=image)
+    args = parser.parse_args()
+    
+    args.__dict__.update(load.HYPER_PARAMETERS[args.env])
+
+    pprint(args.__dict__)
+    
+    def run():
+        #load.load_clean(args.env)
+        print("--------------------------")
+        print(args.env, flush=True)
+        print("--------------------------")
         
-        print("epoch:", e, optim.cma())
-        #optim.cma.reset()
-
-        '''
-        indx = np.random.randint(0, test.shape[0], size=(14,))
-        vu.show(vu.gallery(tu.to_numpy(test[indx])), 'real')
-        vu.show(vu.gallery(tu.to_numpy(F.sigmoid(model(test[indx])))), 'recon')
-        '''
-        wb.save()
-
-
-
-
-
-
-
-
-
-
+        #to NCHW float32 format
+        print("--- loading data...")
+        _episodes = [load.transform(e[1]['state'], args.binary, args.binary_threshold) for e in load.load_clean(args.env, limit=args.dataset_size)] #~100k frames
+        for episode in _episodes[-1]:
+            np.random.shuffle(episode)
+        _episodes = [torch.from_numpy(episode) for episode in _episodes]
+        
+        episode_test = _episodes[-1] 
+        episodes = _episodes[:-1]
+        
+        print("--- done.")
+        
+        input_shape = episodes[0].shape[1:]
+        
+        encoder, decoder = AE.default2D(input_shape, args.latent_size)
+        
+        model = AE.AE(encoder, decoder).to(args.device)
+        optim = AEOptimiser(model) #bce/wl?
+    
+        wb = WB('anomapy', model, id = "AE-{0}-{1}".format(args.env, fu.file_datetime()), config={arg:getattr(args, arg) for arg in vars(args)})
+        
+        print("--- training... ")
+        
+        step = 0
+        with wb:
+            for e in range(1, args.epochs + 1):
+                
+                indx = np.random.randint(0, episode_test.shape[0])
+                real = tu.to_numpy(episode_test[indx])
+                recon = tu.to_numpy(F.sigmoid(model(episode_test[indx].unsqueeze(0))))[0]
+                image = wb.image(np.concatenate((real, recon), axis=2), "reconstruction")
+                wb(reconstruction=image)
+                
+                #each epoch
+                for episode in episodes:
+                    for batch in du.batch_iterator(episode, batch_size=args.batch_size):
+                        optim(batch)
+                        step = wb.step()
+                        if step % 100:
+                            wb(**optim.cma.recent())
+                
+                print("--- epoch:", e, optim.cma(), flush=True)
+                #optim.cma.reset()
+                if not e % 5:
+                    print("--- saving model: epoch {0} step {1}".format(e, step))
+                    wb.save(overwrite=False)
+                    print("--- done", flush=True)
+                    
+            wb.save(overwrite=False)
+            
+        print("\n\n\n\n", flush=True)
+        
+    run()
+    
+    
+    
+    
+    
+    
+    
+    
+    

@@ -5,10 +5,22 @@ import pyworld.toolkit.tools.datautils as du
 import pyworld.toolkit.tools.torchutils as tu
 
 import numpy as np
+import re
+import os
 
 
 NO_FRAME_SKIP = "NoFrameskip-v4"
-LOAD_PATH  = '~/Documents/repos/datasets/atari/{0}' + NO_FRAME_SKIP + "/"
+PATH = '~/Documents/repos/datasets/atari/'
+LOAD_PATH  = PATH + '{0}/{1}' + NO_FRAME_SKIP + "/"
+
+def PATH_RAW(env):
+    return LOAD_PATH.format('raw', env) 
+
+def PATH_CLEAN(env):
+    return LOAD_PATH.format('clean', env)
+
+def PATH_ANOMALY(env):
+    return LOAD_PATH.format('anomaly', env)
 
 BEAMRIDER = "BeamRider"
 BREAKOUT = "Breakout"
@@ -22,23 +34,97 @@ ENVIRONMENTS = [BEAMRIDER, BREAKOUT, ENDURO, PONG, QBERT, SEAQUEST, SPACEINVADER
 
 #TODO thresholds...
 H_BEAMRIDER = {'binary':False, 'binary_threshold':0.35}
-H_BREAKOUT = {'binary':True, 'binary_threshold':0.2}
+H_BREAKOUT = {'binary':False, 'binary_threshold':0.2}
 H_ENDURO = {'binary':False, 'binary_threshold':0.2}
-H_PONG = {'binary':True, 'binary_threshold':0.5}
+H_PONG = {'binary':False, 'binary_threshold':0.5}
 H_QBERT = {'binary':False, 'binary_threshold':0.3}
 H_SEAQUEST = {'binary':False, 'binary_threshold':0.3}
-H_SPACEINVADERS = {'binary':True, 'binary_threshold':0.2}
+H_SPACEINVADERS = {'binary':False, 'binary_threshold':0.2}
 
 HYPER_PARAMETERS = {BEAMRIDER:H_BEAMRIDER, BREAKOUT:H_BREAKOUT, ENDURO:H_ENDURO, 
                     PONG:H_PONG, QBERT:H_QBERT, SEAQUEST:H_SEAQUEST, 
                     SPACEINVADERS:H_SPACEINVADERS}
 
-def path_train(env):
-    return LOAD_PATH.format(env)
+def set_path(path):
+    global PATH
+    PATH = path
 
-def path_test(env):
-    return LOAD_PATH.format(env) + "test/"
+def dataset_info_raw(env):
+    print("ENVIRONMENT: {0}".format(env))
+    print("   PATH: {0}".format(PATH_RAW(env)))
+    print("   EPISODES: {0}".format(len(files_raw(env))))
 
+def files_raw(env):
+    return sort_files([file for file in fu.files(PATH_RAW(env), full=True)])
+
+def files_clean(env):
+    return sort_files([file for file in fu.files(PATH_CLEAN(env), full=True)])
+
+def files_anomaly(env):
+    return sort_files([file for file in fu.files(PATH_ANOMALY(env), full=True)])
+
+def sort_files(files):
+    def number(file):
+        f = os.path.splitext(os.path.basename(file))[0]
+        x = re.findall("[0-9]+", f)
+        if len(x) == 1:
+            return int(x[0])
+        elif len(x) == 0:
+            return 0
+        else:
+            raise ValueError("Invalid file name for sort: {0}" + f)
+    return sorted(files, key = lambda x: number(x))
+
+def __load__(files, *args):
+    for file in files:
+        episode = fu.load(file)
+        episode  = {arg:episode[arg][...] for arg in args}
+        yield file, episode
+
+def __load_frame_limit__(files, *args, limit=None):
+    assert limit is not None
+    total_frames = 0
+    for file, episode in __load__(files, *args):
+        yield file, episode
+        total_frames += episode['state'].shape[0]
+        if total_frames > limit:
+            break
+        
+def load(path, *args, limit=None):
+    files = sort_files([file for file in fu.files(path, full=True)])
+    if limit is not None:
+        return __load_frame_limit__(files, *args, limit=limit)
+    else:
+        return __load__(files, *args)   
+
+def load_raw(env, limit=None):
+    return load(PATH_RAW(env), 'state', 'action', limit=limit)
+
+def load_clean(env, limit=None):
+    return load(PATH_CLEAN(env), 'state', 'action', limit=limit)
+
+def load_anomaly(env, anomaly=None, limit=None):
+    if anomaly is not None:
+        anomaly += " "# must match whole word
+        path = PATH_ANOMALY(env)
+        data = fu.load(path + "meta.txt")
+        valid_lines = [line for line in data if anomaly in line]
+        files = [path + re.findall("(episode(\([0-9]+\))?)", line)[0][0] + '.hd5f'  for line in valid_lines]
+        return __load__(files, 'state', 'action', 'label')
+    else:
+        return load(PATH_ANOMALY(env), 'state', 'action', 'label', limit=limit)
+
+def transform(states, binary, binary_threshold = 0.5):
+    states = states.astype(np.float32) / 255. #convert to CHW format
+    states = vu.transform.gray(states)
+    if binary:
+        states = vu.transform.binary(states, binary_threshold)
+    return vu.transform.CHW(states) 
+
+
+
+    
+'''
 def load(path, binary=False, binary_threshold = 0.5):
     episode = fu.load(path)['state'][...].astype(np.float32) / 255. #convert to CHW format
     episode = vu.transform.gray(episode)
@@ -62,14 +148,8 @@ def load_all(*paths, binary=False, binary_threshold = 0.5, max_size=2000):
 
     episodes = np.concatenate(episodes, axis=0)
     return episodes, episodes.shape[1:]
-
-if __name__ == "__main__":
-    path = '~/Documents/repos/datasets/atari/'
+'''
 
 
-    for env, params in HYPER_PARAMETERS.items():
-        episode,  _ = load(path + env + NO_FRAME_SKIP + '/episode.hd5f', **params)
-
-        vu.play(episode)
 
     
