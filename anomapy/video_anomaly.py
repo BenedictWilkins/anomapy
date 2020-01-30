@@ -274,8 +274,6 @@ if __name__ == "__main__":
         episode = np.concatenate((episode_clean['state'], episode_anomaly['state']), axis=2)
         vu.play(episode)
     
-    
-    
     def videos(env, *anomalies):
         file = '~/Documents/repos/datasets/atari/videos/{0}/{1}.mp4'
         meta_file = '~/Documents/repos/datasets/atari/videos/{0}/meta.txt'.format(env)
@@ -338,8 +336,6 @@ if __name__ == "__main__":
         meta_f.close()
         
         #for file, episode in load.load_clean(env):
-            
-            
             
             #for anom in anomalies:
             #    pass #a_episode, labels = anom(episode['state'], ratio=0.05)

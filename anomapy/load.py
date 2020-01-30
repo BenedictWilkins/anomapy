@@ -8,6 +8,28 @@ import numpy as np
 import re
 import os
 
+def get_model_files(args):
+    return [file for file in fu.files(args.save_path, full=True) if "model" in file or file.endswith(".pt")] 
+
+def load_autoencoder(args):
+    import pyworld.toolkit.nn.autoencoder.AE as AE
+    encoder, decoder = AE.default2D(args.input_shape, args.latent_size)
+    model = AE.AE(encoder, decoder).to(args.device)
+
+    files = fu.sort_files(get_model_files(args))
+    assert len(files) > 0 #no models found?
+    return fu.load(files[args.index], model=model), os.path.basename(files[args.index])
+
+def load_sssn(args):
+    raise NotImplementedError()
+
+def load_sassn(args):
+    raise NotImplementedError()
+
+
+MODEL = {'auto-encoder':load_autoencoder, 
+          'sssn':load_sssn,
+          'sassn':load_sassn}
 
 NO_FRAME_SKIP = "NoFrameskip-v4"
 PATH = '~/Documents/repos/datasets/atari/'
@@ -55,25 +77,13 @@ def dataset_info_raw(env):
     print("   EPISODES: {0}".format(len(files_raw(env))))
 
 def files_raw(env):
-    return sort_files([file for file in fu.files(PATH_RAW(env), full=True)])
+    return fu.sort_files([file for file in fu.files(PATH_RAW(env), full=True)])
 
 def files_clean(env):
-    return sort_files([file for file in fu.files(PATH_CLEAN(env), full=True)])
+    return fu.sort_files([file for file in fu.files(PATH_CLEAN(env), full=True)])
 
 def files_anomaly(env):
-    return sort_files([file for file in fu.files(PATH_ANOMALY(env), full=True)])
-
-def sort_files(files):
-    def number(file):
-        f = os.path.splitext(os.path.basename(file))[0]
-        x = re.findall("[0-9]+", f)
-        if len(x) == 1:
-            return int(x[0])
-        elif len(x) == 0:
-            return 0
-        else:
-            raise ValueError("Invalid file name for sort: {0}" + f)
-    return sorted(files, key = lambda x: number(x))
+    return fu.sort_files([file for file in fu.files(PATH_ANOMALY(env), full=True)])
 
 def __load__(files, *args):
     for file in files:
@@ -122,8 +132,18 @@ def transform(states, binary, binary_threshold = 0.5):
     return vu.transform.CHW(states) 
 
 
-
+def transformer(args):
     
+    if args.colour: 
+        return lambda x: x[1]['state']
+    else:
+        args.__dict__.update(HYPER_PARAMETERS[args.env])
+        return lambda x: transform(x[1]['state'], args.binary, args.binary_threshold)
+
+
+
+
+
 '''
 def load(path, binary=False, binary_threshold = 0.5):
     episode = fu.load(path)['state'][...].astype(np.float32) / 255. #convert to CHW format

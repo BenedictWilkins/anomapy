@@ -35,22 +35,26 @@ if __name__ == "__main__":
     parser.add_argument("-batch_size", type=int, default=64)
     parser.add_argument("-dataset_size", type=int, default=None) #use all data
     parser.add_argument("-device", type=str, default = tu.device())    
-        
+    parser.add_argument("-colour", type=bool, default=False)    
+    
     args = parser.parse_args()
     
-    args.__dict__.update(load.HYPER_PARAMETERS[args.env])
+    args.__dict__['model'] = 'auto-encoder'
 
-    pprint(args.__dict__)
-    
     def run():
         #load.load_clean(args.env)
         print("--------------------------")
         print(args.env, flush=True)
         print("--------------------------")
-        
+
         #to NCHW float32 format
         print("--- loading data...")
-        _episodes = [load.transform(e[1]['state'], args.binary, args.binary_threshold) for e in load.load_clean(args.env, limit=args.dataset_size)] #~100k frames
+
+        transform = load.transformer(args) #colour? binary? grayscale?
+
+        pprint(args.__dict__)
+
+        _episodes = [transform(e) for e in load.load_clean(args.env, limit=args.dataset_size)] #~100k frames
         for episode in _episodes[-1]:
             np.random.shuffle(episode)
         _episodes = [torch.from_numpy(episode) for episode in _episodes]
@@ -60,11 +64,11 @@ if __name__ == "__main__":
         
         print("--- done.")
         
-        input_shape = episodes[0].shape[1:]
+        args.__dict__['input_shape'] = episodes[0].shape[1:]
         
-        encoder, decoder = AE.default2D(input_shape, args.latent_size)
-        
+        encoder, decoder = AE.default2D(args.input_shape, args.latent_size)
         model = AE.AE(encoder, decoder).to(args.device)
+
         optim = AEOptimiser(model) #bce/wl?
     
         wb = WB('anomapy', model, id = "AE-{0}-{1}".format(args.env, fu.file_datetime()), config={arg:getattr(args, arg) for arg in vars(args)})
