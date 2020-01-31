@@ -101,7 +101,7 @@ def __load_frame_limit__(files, *args, limit=None):
             break
         
 def load(path, *args, limit=None):
-    files = sort_files([file for file in fu.files(path, full=True)])
+    files = fu.sort_files([file for file in fu.files(path, full=True)])
     if limit is not None:
         return __load_frame_limit__(files, *args, limit=limit)
     else:
@@ -124,23 +124,14 @@ def load_anomaly(env, anomaly=None, limit=None):
     else:
         return load(PATH_ANOMALY(env), 'state', 'action', 'label', limit=limit)
 
-def transform(states, binary, binary_threshold = 0.5):
-    states = states.astype(np.float32) / 255. #convert to CHW format
-    states = vu.transform.gray(states)
-    if binary:
-        states = vu.transform.binary(states, binary_threshold)
-    return vu.transform.CHW(states) 
-
-
-def transformer(args):
-    
-    if args.colour: 
-        return lambda x: x[1]['state']
-    else:
-        args.__dict__.update(HYPER_PARAMETERS[args.env])
-        return lambda x: transform(x[1]['state'], args.binary, args.binary_threshold)
-
-
+def transform(episode, args):
+    states = episode['state'].astype(np.float32) / 255. #convert to CHW format
+    if not args.colour:
+        states = vu.transform.gray(states)
+        if args.binary:
+            states = vu.transform.binary(states, args.binary_threshold)
+    episode['state'] = vu.transform.CHW(states)
+    return episode 
 
 
 

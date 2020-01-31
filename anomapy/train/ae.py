@@ -7,7 +7,7 @@ import pyworld.toolkit.tools.visutils as vu
 import pyworld.toolkit.tools.datautils as du
 import pyworld.toolkit.tools.torchutils as tu
 import pyworld.toolkit.tools.debugutils as debug
-
+from pyworld.toolkit.tools.wbutils import WB
 
 import numpy as np
 import torch
@@ -18,8 +18,7 @@ import argparse
 from pprint import pprint
 
 from .. import load
-
-from pyworld.toolkit.tools.wbutils import WB
+from . import initialise
 
 
 def load_mnist():
@@ -28,53 +27,22 @@ def load_mnist():
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-env", type=str, required=True)    
-    parser.add_argument("-latent_size", type=int, default=256)
-    parser.add_argument("-epochs", type=int, default=50)
-    parser.add_argument("-batch_size", type=int, default=64)
-    parser.add_argument("-dataset_size", type=int, default=None) #use all data
-    parser.add_argument("-device", type=str, default = tu.device())    
-    parser.add_argument("-colour", type=bool, default=False)    
-    
-    args = parser.parse_args()
-    
-    args.__dict__['model'] = 'auto-encoder'
+    episodes, args = initialise.initialise("auto-encoder")
+    episodes, episode_test = initialise.states(episodes, test_episodes=1)
 
-    def run():
-        #load.load_clean(args.env)
-        print("--------------------------")
-        print(args.env, flush=True)
-        print("--------------------------")
-
-        #to NCHW float32 format
-        print("--- loading data...")
-
-        transform = load.transformer(args) #colour? binary? grayscale?
+    def run(episodes, args):
+        print("-- initialising model...")
+        encoder, decoder = AE.default2D(args.state_shape, args.latent_shape)
+        model = AE.AE(encoder, decoder).to(args.device)
+        optim = AEOptimiser(model) #bce/wl?
+        print("-- done.")
 
         pprint(args.__dict__)
 
-        _episodes = [transform(e) for e in load.load_clean(args.env, limit=args.dataset_size)] #~100k frames
-        for episode in _episodes[-1]:
-            np.random.shuffle(episode)
-        _episodes = [torch.from_numpy(episode) for episode in _episodes]
-        
-        episode_test = _episodes[-1] 
-        episodes = _episodes[:-1]
-        
-        print("--- done.")
-        
-        args.__dict__['input_shape'] = episodes[0].shape[1:]
-        
-        encoder, decoder = AE.default2D(args.input_shape, args.latent_size)
-        model = AE.AE(encoder, decoder).to(args.device)
-
-        optim = AEOptimiser(model) #bce/wl?
-    
         wb = WB('anomapy', model, id = "AE-{0}-{1}".format(args.env, fu.file_datetime()), config={arg:getattr(args, arg) for arg in vars(args)})
-        
+    
         print("--- training... ")
-        
+
         step = 0
         with wb:
             for e in range(1, args.epochs + 1):
@@ -82,7 +50,7 @@ if __name__ == "__main__":
                 indx = np.random.randint(0, episode_test.shape[0])
                 real = tu.to_numpy(episode_test[indx])
                 recon = tu.to_numpy(F.sigmoid(model(episode_test[indx].unsqueeze(0))))[0]
-                image = wb.image(np.concatenate((real, recon), axis=2), "reconstruction")
+                image = wb.image(vu.transform.HWC(np.concatenate((real, recon), axis=2)), "reconstruction")
                 wb(reconstruction=image)
                 
                 #each epoch
@@ -104,7 +72,7 @@ if __name__ == "__main__":
             
         print("\n\n\n\n", flush=True)
         
-    run()
+    run(episodes, args)
     
     
     
