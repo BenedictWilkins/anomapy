@@ -13,6 +13,12 @@ import pyworld.toolkit.tools.datautils as du
 import pyworld.toolkit.tools.torchutils as tu
 import pyworld.toolkit.tools.debugutils as debug
 
+from pyworld.toolkit.tools.wbutils import WB as wb_init
+
+
+def WB(model_name, model, args):
+    return wb_init('anomapy', model, id = "{0}-{1}-{2}".format(model_name, args.env, fu.file_datetime()), tags=[model_name], config={arg:getattr(args, arg) for arg in vars(args)})
+
 def initialise(model):
     if not model in load.MODEL:
         raise ValueError("Invalid model {0}, valid models include: {1}".format(model, load.MODEL))
@@ -24,10 +30,11 @@ def initialise(model):
     parser.add_argument("-batch_size", type=int, default=64)
     parser.add_argument("-dataset_size", type=int, default=None, help="how much data to use frames. Default None means use all avaliable data.") #use all data
     parser.add_argument("-device", type=str, default = tu.device(), help="which device to use (default GPU if avaliable).")    
-    parser.add_argument("-colour", type=bool, default=False, help="whether to use full colour states (True) or transform states to grayscale (False)")    
+    parser.add_argument("-colour", type=bool, default=True, help="whether to use full colour states (True) or transform states to grayscale (False)")    
     
     args = parser.parse_args()
 
+    print(args)
     args.__dict__['model'] = model
     args.__dict__.update(load.HYPER_PARAMETERS[args.env]) #update any hyper params that have not yet been given
 
@@ -48,7 +55,7 @@ def initialise(model):
 
     return episodes, args
 
-def states(episodes, test_episodes=1):
+def states(episodes, test_episodes=1, shuffle=True):
     assert test_episodes < len(episodes)
     print("-- preparing episodes...")
     print("---- {0:<3} train episodes".format(len(episodes) - test_episodes))
@@ -56,12 +63,19 @@ def states(episodes, test_episodes=1):
     #only states are required
     episodes = [e['state'] for e in episodes]
     
-    for episode in episodes[-test_episodes]:
-        np.random.shuffle(episode)
+    if shuffle:
+        for episode in episodes[-test_episodes]:
+            np.random.shuffle(episode)
+
     episodes = [torch.from_numpy(e) for e in episodes]
 
     episode_test = episodes[-test_episodes] 
     episodes = episodes[:-test_episodes]
+
     print("-- done.")
 
     return episodes, episode_test
+
+def load_mnist():
+    x_train, _, x_test, _ = du.mnist()
+    return torch.from_numpy(x_train), torch.from_numpy(x_test), x_train.shape[1:]

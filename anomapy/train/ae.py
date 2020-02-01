@@ -21,16 +21,15 @@ from .. import load
 from . import initialise
 
 
-def load_mnist():
-    x_train, _, x_test, _ = du.mnist()
-    return torch.from_numpy(x_train), torch.from_numpy(x_test), x_train.shape[1:]
+
 
 if __name__ == "__main__":
+    MODEL = "auto-encoder"
 
-    episodes, args = initialise.initialise("auto-encoder")
+    episodes, args = initialise.initialise(MODEL)
     episodes, episode_test = initialise.states(episodes, test_episodes=1)
 
-    def run(episodes, args):
+    def run():
         print("-- initialising model...")
         encoder, decoder = AE.default2D(args.state_shape, args.latent_shape)
         model = AE.AE(encoder, decoder).to(args.device)
@@ -39,7 +38,8 @@ if __name__ == "__main__":
 
         pprint(args.__dict__)
 
-        wb = WB('anomapy', model, id = "AE-{0}-{1}".format(args.env, fu.file_datetime()), config={arg:getattr(args, arg) for arg in vars(args)})
+        wb = initialise.WB(MODEL, model, args)
+        #wb = WB('anomapy', model, id = "AE-{0}-{1}".format(args.env, fu.file_datetime()), config={arg:getattr(args, arg) for arg in vars(args)})
     
         print("--- training... ")
 
@@ -72,7 +72,7 @@ if __name__ == "__main__":
             
         print("\n\n\n\n", flush=True)
         
-    run(episodes, args)
+    run()
     
     
     

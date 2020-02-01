@@ -13,12 +13,13 @@ def get_model_files(args):
 
 def load_autoencoder(args):
     import pyworld.toolkit.nn.autoencoder.AE as AE
-    encoder, decoder = AE.default2D(args.input_shape, args.latent_size)
+    encoder, decoder = AE.default2D(args.state_shape, args.latent_shape)
     model = AE.AE(encoder, decoder).to(args.device)
 
     files = fu.sort_files(get_model_files(args))
     assert len(files) > 0 #no models found?
-    return fu.load(files[args.index], model=model), os.path.basename(files[args.index])
+    fu.load(files[args.index], model=model) #does not return anything to prevent a weird error...
+    return model, os.path.basename(files[args.index])
 
 def load_sssn(args):
     raise NotImplementedError()
@@ -28,8 +29,8 @@ def load_sassn(args):
 
 
 MODEL = {'auto-encoder':load_autoencoder, 
-          'sssn':load_sssn,
-          'sassn':load_sassn}
+         'sssn':load_sssn,
+         'sassn':load_sassn}
 
 NO_FRAME_SKIP = "NoFrameskip-v4"
 PATH = '~/Documents/repos/datasets/atari/'
