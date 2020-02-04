@@ -102,8 +102,9 @@ def states_actions(episodes, test_episodes=1, shuffle=True):
     states = [torch.from_numpy(e['state']) for e in episodes]
     actions = [transform_actions(e['action']) for e in episodes]
 
-    episode_test = zip([states[-test_episodes]], [actions[-test_episodes]])
-    episodes =  zip(states[:-test_episodes], actions[:-test_episodes])
+    episode_test = list(zip([states[-test_episodes]], [actions[-test_episodes]]))
+    episodes =  list(zip(states[:-test_episodes], actions[:-test_episodes]))
+
 
     print("-- done.")
     return episodes, episode_test
