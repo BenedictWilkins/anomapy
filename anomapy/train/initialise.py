@@ -93,10 +93,11 @@ def states_actions(episodes, test_episodes=1, shuffle=True):
     print("-- preparing episodes...")
     print("---- {0:<3} train episodes".format(len(episodes) - test_episodes))
     print("---- {0:<3}  test episodes".format(test_episodes))
+
     def transform_actions(actions):
-        actions = actions.astype(np.uint8)
+        actions = actions.astype(np.int64)
         actions[-1] = 0 #the last value in an episode is nan
-        return actions
+        return actions[:,np.newaxis]
 
     states = [torch.from_numpy(e['state']) for e in episodes]
     actions = [transform_actions(e['action']) for e in episodes]

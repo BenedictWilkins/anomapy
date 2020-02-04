@@ -28,7 +28,7 @@ if __name__ == "__main__":
     MODEL = "sassn"
 
     episodes, args = initialise.initialise(MODEL)
-    episodes, episode_test = initialise.states_actions(args.env, episodes, test_episodes=1, shuffle=False)
+    episodes, episode_test = initialise.states_actions(episodes, test_episodes=1, shuffle=False)
 
     OPTIM_HYPERPARAMS = {"optim_mode":optim_mode.all,
                          "optim_margin":0.2,
