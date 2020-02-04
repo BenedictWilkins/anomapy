@@ -15,7 +15,6 @@ import pyworld.toolkit.tools.debugutils as debug
 
 from pyworld.toolkit.tools.wbutils import WB as wb_init
 
-
 def WB(model_name, model, args):
     return wb_init('anomapy', model, id = "{0}-{1}-{2}".format(model_name, args.env, fu.file_datetime()), tags=[model_name], config={arg:getattr(args, arg) for arg in vars(args)})
 
@@ -31,7 +30,7 @@ def initialise(model):
     parser.add_argument("-dataset_size", type=int, default=None, help="how much data to use frames. Default None means use all avaliable data.") #use all data
     parser.add_argument("-device", type=str, default = tu.device(), help="which device to use (default GPU if avaliable).")    
     parser.add_argument("-colour", type=bool, default=True, help="whether to use full colour states (True) or transform states to grayscale (False)")    
-    
+
     args = parser.parse_args()
 
     print(args)
@@ -44,15 +43,21 @@ def initialise(model):
 
     print("-- loading data")
 
+    data_size = 0
     episodes = []
     for file, episode in load.load_clean(args.env, limit=args.dataset_size):
         print("---- loading episode {0}".format(file))
+        data_size += episode['state'].shape[0]
         episodes.append(load.transform(episode, args))
-    print("-- done.")
+    print("-- done, total frames: {0}".format(data_size))
 
-    
+    #all shapes should be 
     args.__dict__['state_shape'] = tuple(episodes[0]['state'].shape[1:])
-    args.__dict__['action_shape'] = (1,) #should always be 1?
+    if not args.env in load.ACTION_SHAPES:
+        raise ValueError("could not find action shape for environment: {0}".format(args.env))
+    args.__dict__['action_shape'] = (load.ACTION_SHAPES[args.env],)
+
+    args.latent_shape = (args.latent_shape, )
 
     print(args.state_shape)
     if args.colour:
@@ -81,6 +86,25 @@ def states(episodes, test_episodes=1, shuffle=True):
 
     print("-- done.")
 
+    return episodes, episode_test
+
+def states_actions(episodes, test_episodes=1, shuffle=True):
+    assert test_episodes < len(episodes)
+    print("-- preparing episodes...")
+    print("---- {0:<3} train episodes".format(len(episodes) - test_episodes))
+    print("---- {0:<3}  test episodes".format(test_episodes))
+    def transform_actions(actions):
+        actions = actions.astype(np.uint8)
+        actions[-1] = 0 #the last value in an episode is nan
+        return actions
+
+    states = [torch.from_numpy(e['state']) for e in episodes]
+    actions = [transform_actions(e['action']) for e in episodes]
+
+    episode_test = zip([states[-test_episodes]], [actions[-test_episodes]])
+    episodes =  zip(states[:-test_episodes], actions[:-test_episodes])
+
+    print("-- done.")
     return episodes, episode_test
 
 def load_mnist():

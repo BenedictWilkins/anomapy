@@ -18,7 +18,7 @@ def CHW_format(func):
         if isHWC(episode):
             if not SUPRESS_WARNINGS:    
                 print("Warning: function \"{0}\" requires NCHW format, transforming from assumed NHWC format.".format(func.__name__))
-            e, *r = func(CHW(episode))
+            e, *r = func(CHW(episode), *args, **kwargs)
             return (HWC(e), *r)
             
         return func(episode)
@@ -266,19 +266,18 @@ if __name__ == "__main__":
     import pyworld.toolkit.tools.fileutils as fu
     import pyworld.toolkit.tools.visutils as vu
     
-    
-    def show_ca(env):
-        _, episode_clean = next(load.load_clean(env))
-        _, episode_anomaly = next(load.load_anomaly(env))
-        episode = np.concatenate((episode_clean['state'], episode_anomaly['state']), axis=2)
-        vu.play(episode)
+    def show_ca(env, anomaly):
+        #_, episode_clean = next(load.load_raw(env))
+        _, episode_anomaly = next(load.load_anomaly(env, anomaly=anomaly))
+        #episode = np.concatenate((episode_clean['state'], episode_anomaly['state']), axis=2)
+        vu.play(episode_anomaly['state'], name="{0}:{1}".format(env, anomaly))
     
     def videos(env, *anomalies):
         file = '~/Documents/repos/datasets/atari/videos/{0}/{1}.mp4'
         meta_file = '~/Documents/repos/datasets/atari/videos/{0}/meta.txt'.format(env)
     
         _, episode = next(load.load_raw(env))
-        print(episode['state'].shape, episode['state'].dtype)
+        #print(episode['state'].shape, episode['state'].dtype)
         
         meta_f = fu.save(meta_file, "{0}\n".format(env))
         
@@ -287,6 +286,7 @@ if __name__ == "__main__":
             
             meta_f.write("----------------------------------------\n")
             meta_f.write(anom.__name__ + "\n")
+            meta_f.write("   anomaly prob: {0}\n".format(0.05))
             meta_f.write("   total frames: {0}\n".format(labels.shape[0]))
             meta_f.write("   normal frames: {0}\n".format(labels.shape[0] - np.sum(labels)))
             meta_f.write("   anomalous frames: {0}\n".format(np.sum(labels)))
@@ -295,7 +295,7 @@ if __name__ == "__main__":
             fu.save(file.format(env, anom.__name__), a_episode, format='rgb')
             
         meta_f.close()
-        
+
     def generate_visual_anomalies(env, *anomalies):
         
         len_episodes = len(load.files_raw(env))
@@ -313,7 +313,9 @@ if __name__ == "__main__":
         meta_f.write("--------------------------------------------------------------------------------\n")
         meta_f.write(columns_.format('EPISODE', 'ANOMALY', 'SHAPE', 'A_COUNT'))
         meta_f.write("--------------------------------------------------------------------------------\n")
-        for i, fe in enumerate(load.load_clean(env)):
+        
+        
+        for i, fe in enumerate(load.load_raw(env)):
             file, episode = fe
             if i >= len(_anom):
                 break
@@ -326,9 +328,7 @@ if __name__ == "__main__":
             meta_f.write(columns_.format(e_name, anom.__name__, str(episode['state'].shape), a_count))
             #print(columns_.format(e_name, anom.__name__, str(episode['state'].shape), a_count)) 
             
-            print(episode['state'].dtype)
-            
-            fu.save(file.replace('clean', 'anomaly'), episode)
+            fu.save(file.replace('raw', 'anomaly'), episode)
             
         meta_f.write("--------------------------------------------------------------------------------\n")
         
@@ -345,15 +345,17 @@ if __name__ == "__main__":
     import numpy as np
     anomalies = [fill, block, freeze, freeze_skip, split_horizontal, split_vertical]
     for env in load.ENVIRONMENTS:
+        #for anom in ANOMALIES:
+        #    show_ca(env, anom)
 
-        _, episode = next(load.load_raw(env))
-
-        a_episode1, labels = split_horizontal(episode['state'], ratio=0.05)
-        a_episode2, labels = split_vertical(episode['state'], ratio=0.05)
-        a_episode = np.concatenate((a_episode1, a_episode2), axis=2)
-        vu.play(a_episode)    
-        break
-        # videos(env, *anomalies)
+        #_, episode = next(load.load_raw(env))
+        #a_episode1, labels = split_horizontal(episode['state'], ratio=0.05)
+        #a_episode2, labels = split_vertical(episode['state'], ratio=0.05)
+        #a_episode = np.concatenate((a_episode1, a_episode2), axis=2)
+        #vu.play(a_episode)    
+        #break
+        
+        videos(env, *anomalies)
         #generate_visual_anomalies(env, *anomalies)
         
     

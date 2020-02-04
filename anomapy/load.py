@@ -94,6 +94,8 @@ def files_clean(env):
 def files_anomaly(env):
     return fu.sort_files([file for file in fu.files(PATH_ANOMALY(env), full=True)])
 
+ACTION_SHAPES = {BEAMRIDER:9, BREAKOUT:4, ENDURO:9, PONG:6, QBERT:6, SEAQUEST:18, SPACEINVADERS:6}
+
 def __load__(files, *args):
     for file in files:
         episode = fu.load(file)
