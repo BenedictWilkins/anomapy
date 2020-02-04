@@ -114,7 +114,6 @@ def split_horizontal(episode, ratio=0.05):
 def split_vertical(episode, ratio=0.05):
     return split(episode, ratio=ratio, vertical=True, horizontal=False)
 
-
 @CHW_format
 def split(episode, ratio=0.05, vertical=False, horizontal=True):
     '''
@@ -343,11 +342,19 @@ if __name__ == "__main__":
     SUPRESS_WARNINGS = True
     
     #show_ca(load.BEAMRIDER)
-
+    import numpy as np
     anomalies = [fill, block, freeze, freeze_skip, split_horizontal, split_vertical]
     for env in load.ENVIRONMENTS:
-        #videos(env, *anomalies)
-        generate_visual_anomalies(env, *anomalies)
+
+        _, episode = next(load.load_raw(env))
+
+        a_episode1, labels = split_horizontal(episode['state'], ratio=0.05)
+        a_episode2, labels = split_vertical(episode['state'], ratio=0.05)
+        a_episode = np.concatenate((a_episode1, a_episode2), axis=2)
+        vu.play(a_episode)    
+        break
+        # videos(env, *anomalies)
+        #generate_visual_anomalies(env, *anomalies)
         
     
     

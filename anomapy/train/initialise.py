@@ -50,8 +50,15 @@ def initialise(model):
         episodes.append(load.transform(episode, args))
     print("-- done.")
 
+    
     args.__dict__['state_shape'] = tuple(episodes[0]['state'].shape[1:])
     args.__dict__['action_shape'] = (1,) #should always be 1?
+
+    print(args.state_shape)
+    if args.colour:
+        assert args.state_shape[0] == 3
+    else:
+        assert args.state_Shape[0] == 1
 
     return episodes, args
 

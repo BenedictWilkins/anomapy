@@ -6,4 +6,5 @@ print("TESTING DEVICE AVAILABILITY:")
 device = tu.device()
 if device == 'cuda':
     print("SUCCESS")
-print("OH NO - check GPU drivers?")
+else:
+    print("OH NO - check GPU drivers?")

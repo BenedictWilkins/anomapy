@@ -11,18 +11,26 @@ import os
 def get_model_files(args):
     return [file for file in fu.files(args.save_path, full=True) if "model" in file or file.endswith(".pt")] 
 
-def load_autoencoder(args):
-    import pyworld.toolkit.nn.autoencoder.AE as AE
-    encoder, decoder = AE.default2D(args.state_shape, args.latent_shape)
-    model = AE.AE(encoder, decoder).to(args.device)
-
+def load_model(model, args):
     files = fu.sort_files(get_model_files(args))
     assert len(files) > 0 #no models found?
     fu.load(files[args.index], model=model) #does not return anything to prevent a weird error...
     return model, os.path.basename(files[args.index])
 
+def load_autoencoder(args):
+    import pyworld.toolkit.nn.autoencoder.AE as AE
+    encoder, decoder = AE.default2D(args.state_shape, args.latent_shape)
+    model = AE.AE(encoder, decoder).to(args.device)
+    return load_model(model, args)
+
 def load_sssn(args):
-    raise NotImplementedError()
+    from pyworld.toolkit.nn.CNet import CNet2
+    print(args.state_shape)
+    model = CNet2(args.state_shape, args.latent_shape).to(args.device)
+    return load_model(model, args)
+
+
+
 
 def load_sassn(args):
     raise NotImplementedError()
@@ -120,7 +128,7 @@ def load_anomaly(env, anomaly=None, limit=None):
         path = PATH_ANOMALY(env)
         data = fu.load(path + "meta.txt")
         valid_lines = [line for line in data if anomaly in line]
-        files = [path + re.findall("(episode(\([0-9]+\))?)", line)[0][0] + '.hd5f'  for line in valid_lines]
+        files = [path + re.findall("(episode(\([0-9]+\))?)", line)[0][0] + '.hdf5'  for line in valid_lines]
         return __load__(files, 'state', 'action', 'label')
     else:
         return load(PATH_ANOMALY(env), 'state', 'action', 'label', limit=limit)

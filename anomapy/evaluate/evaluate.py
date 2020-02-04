@@ -16,6 +16,9 @@ import pyworld.toolkit.tools.datautils as du
 import pyworld.toolkit.tools.visutils as vu
 
 
+from pyworld.toolkit.tools.visutils import plot
+
+
 from ..train import ae
 
 import numpy as np
@@ -24,48 +27,66 @@ import torch.nn.functional as F
 
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve
-from sklearn.metrics import roc_auc_score
-
+from sklearn.metrics import auc
 
 import plotly.graph_objects as go
 
-
 def score_autoencoder(model, episode):
     x = torch.from_numpy(episode['state'])
+    model.eval()
     z = tu.collect(model, x)
+    model.train()
     y = F.binary_cross_entropy_with_logits(z, x, reduction='none')
     #print(x.shape, z.shape, y.shape)
-    return tu.to_numpy(y.view(y.shape[0], -1).mean(1))
+    return  episode['label'], tu.to_numpy(y.view(y.shape[0], -1).mean(1))
 
-MODEL_SCORE = {"auto-encoder":score_autoencoder}
+def score_sssn(model, episode):
+    model.eval()
+    z = tu.collect(model, torch.from_numpy(episode['state']))
+    model.train()
 
-def roc(episode, score):
-    fpr, tpr, _ = roc_curve(episodes['label'], score)
+    score = ((z[:-1] - z[1:]) ** 2).sum(1) #L22 distance by default?
+    label = episode['label']
+
+    # a pair is considered anomalous if either state is labelled anomalous
+    # we should pAUC instead of AUC as a measure to reduce bias caused by this?
+    label = np.logical_or(label[:-1], label[1:]) 
+    return label, score
+
+MODEL_SCORE = {"auto-encoder":score_autoencoder, 
+               "sssn":score_sssn}
+
+def roc(label, score):
+    assert label.shape[0] == score.shape[0]
+    fpr, tpr, _ = roc_curve(label, score)
     return fpr, tpr
 
-def histogram(episode, score, bins=10, log=True, title=None):
+def histogram(label, score, bins=10, log_scale=True, title=None):
 
         #vu.play(vu.transform.HWC(episode['state'][episode['label']]))
+        #log_axes = ['', 'log ']
+        a_score = score[label]
+        n_score = score[np.logical_not(label)]
 
-        log_axes = ['', 'log ']
-        print(episode['label'])
-        ai = episode['label']
-        nai = np.logical_not(ai)
+        #print("-- Histogram:")
+        #print("---- normal examples:", n_score.shape[0])
+        #print("---- anomalous examples:", a_score.shape[0])
 
-        n_score = score[nai]
-        a_score = score[ai]
+        return plot.histogram([a_score, n_score], legend=["anomaly", "normal"], bins=bins, log_scale=log_scale, show=False)
 
-        print(score.shape)
-
-        print("-- Histogram:")
-        print("---- normal examples:", n_score.shape[0])
-        print("---- anomalous examples:", a_score.shape[0])
-        return vu.histogram([n_score, a_score], bins, alpha=0.5, log=log, title=title, xlabel='score', ylabel=log_axes[int(log)] + 'count', labels=['normal','anomaly'])
-
-
+        #return vu.histogram([n_score, a_score], bins, alpha=0.5, log=log, title=title, xlabel='score', ylabel=log_axes[int(log)] + 'count', labels=['normal','anomaly'])
 
 if __name__ == "__main__":
 
+    def score_anomaly(model, episodes):
+        labels = []
+        scores = []
+        for episode in episodes:
+            label, score = MODEL_SCORE[args.model](model, episode)
+            labels.append(label)
+            scores.append(score)
+        return np.concatenate(labels), np.concatenate(scores)
+        
     def load_episodes(anomaly):
         return [load.transform(e, args) for f,e in load.load_anomaly(args.env, anomaly=anomaly)]
 
@@ -86,9 +107,16 @@ if __name__ == "__main__":
 
         #fix input_shape
         try:
-            args.state_shape = eval(args.input_shape)
+            args.state_shape = tuple(args.state_shape)
+            #args.action_shape = eval(args.action_shape)
         except:
-            fix('state_shape', (1, 210, 160))
+            try:
+
+                args.state_shape = eval(args.input_shape)
+                args.action_shape = (1,) #???
+            except:
+                fix('state_shape', (1, 210, 160))
+                args.action_shape = (1,)
 
         #fix colour
         try:
@@ -145,31 +173,41 @@ if __name__ == "__main__":
     pprint(args.__dict__, indent=4)
 
     model, model_file = load.MODEL[args.model](args)
-    histogram_path = args.save_path + "/media/histogram/{0}.png"
-    metrics_path = args.save_path + "/metrics/roc/{0}.p"
+    histogram_path = args.save_path + "/media/histogram-{0}.png"
+    roc_path = args.save_path + "/media/roc.png"
+    results_path = args.save_path + "/metrics/results.txt"
+    results = fu.save(results_path, "")
 
     print("-- successfully loaded model: {0}".format(model_file))
 
-    roc_fig = go.Figure()
+    roc_x = []
+    roc_y = []
+    roc_legend = []
+
+    fu.save(args.save_path + "/media/temp.txt", "") #just to create the dir... TODO remove
 
     print("-- evaluating model")
     for anomaly, episodes in live_load_anomaly(args):
-        episodes = utils.cat_episodes(*episodes)
         print("---- computing score")
-        score = MODEL_SCORE[args.model](model, episodes)
-        fig = histogram(episodes, score, bins=20, title=anomaly)
-        fu.save(histogram_path.format(anomaly), fig)
+        label, score = score_anomaly(model, episodes) # get scores
 
-        fpr, tpr = roc(episodes, score)
-        fu.save(metrics_path.format(anomaly), (fpr, tpr))
-       
-        roc_fig.add_trace(go.Scatter(x=fpr, y=tpr, mode='lines', name=anomaly))
+        fig = histogram(label, score, bins=20, title=anomaly)
+        fig.write_image(histogram_path.format(anomaly))
+
+        fpr, tpr = roc(label, score)
+        #fu.save(metrics_path.format(anomaly), (fpr, tpr))
+        results.write("{0}: {1}\n".format(anomaly, auc(fpr, tpr)))
+
+        roc_x.append(fpr)
+        roc_y.append(tpr)
+        roc_legend.append(anomaly)
+
+    fig = plot.plot(roc_x, roc_y, legend=roc_legend)
+    fig.write_image(fu.file(roc_path))
 
     print("-- done.")
       
     #import matplotlib.pyplot as plt
-
-    roc_fig.show()
 
 
 
