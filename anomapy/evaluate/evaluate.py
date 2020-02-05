@@ -18,6 +18,7 @@ import pyworld.toolkit.tools.visutils as vu
 
 from pyworld.toolkit.tools.visutils import plot
 
+from . import score as model_score
 
 from ..train import ae
 
@@ -31,31 +32,6 @@ from sklearn.metrics import auc
 
 import plotly.graph_objects as go
 
-def score_autoencoder(model, episode):
-    x = torch.from_numpy(episode['state'])
-    model.eval()
-    z = tu.collect(model, x)
-    model.train()
-    y = F.binary_cross_entropy_with_logits(z, x, reduction='none')
-    #print(x.shape, z.shape, y.shape)
-    return  episode['label'], tu.to_numpy(y.view(y.shape[0], -1).mean(1))
-
-def score_sssn(model, episode):
-    model.eval()
-    z = tu.collect(model, torch.from_numpy(episode['state']))
-    model.train()
-
-    score = ((z[:-1] - z[1:]) ** 2).sum(1) #L22 distance by default?
-    label = episode['label']
-
-    # a pair is considered anomalous if either state is labelled anomalous
-    # we should pAUC instead of AUC as a measure to reduce bias caused by this?
-    label = np.logical_or(label[:-1], label[1:]) 
-    return label, score
-
-MODEL_SCORE = {"auto-encoder":score_autoencoder, 
-               "sssn":score_sssn}
-
 def roc(label, score):
     assert label.shape[0] == score.shape[0]
     fpr, tpr, _ = roc_curve(label, score)
@@ -63,26 +39,30 @@ def roc(label, score):
 
 def histogram(label, score, bins=10, log_scale=True, title=None):
 
-        #vu.play(vu.transform.HWC(episode['state'][episode['label']]))
-        #log_axes = ['', 'log ']
-        a_score = score[label]
-        n_score = score[np.logical_not(label)]
+    #vu.play(vu.transform.HWC(episode['state'][episode['label']]))
+    #log_axes = ['', 'log ']
+    a_score = score[label]
+    n_score = score[np.logical_not(label)]
 
-        #print("-- Histogram:")
-        #print("---- normal examples:", n_score.shape[0])
-        #print("---- anomalous examples:", a_score.shape[0])
+    #print("-- Histogram:")
+    #print("---- normal examples:", n_score.shape[0])
+    #print("---- anomalous examples:", a_score.shape[0])
 
-        return plot.histogram([a_score, n_score], legend=["anomaly", "normal"], bins=bins, log_scale=log_scale, show=False)
+    return plot.histogram([a_score, n_score], legend=["anomaly", "normal"], bins=bins, log_scale=log_scale, show=False)
 
-        #return vu.histogram([n_score, a_score], bins, alpha=0.5, log=log, title=title, xlabel='score', ylabel=log_axes[int(log)] + 'count', labels=['normal','anomaly'])
+    #return vu.histogram([n_score, a_score], bins, alpha=0.5, log=log, title=title, xlabel='score', ylabel=log_axes[int(log)] + 'count', labels=['normal','anomaly'])
 
 if __name__ == "__main__":
+
+    DEFAULT_SAVE_PATH = os.getcwd()
+
 
     def score_anomaly(model, episodes):
         labels = []
         scores = []
+        mscore = model_score.MODELS[args.model]
         for episode in episodes:
-            label, score = MODEL_SCORE[args.model](model, episode)
+            label, score = mscore.score(model, episode)
             labels.append(label)
             scores.append(score)
         return np.concatenate(labels), np.concatenate(scores)
@@ -98,8 +78,7 @@ if __name__ == "__main__":
     def load_anomaly(args, anomalies=None):
         return {anomaly: load_episodes(anomaly) for anomaly in video_anomaly.ANOMALIES}
 
-    DEFAULT_SAVE_PATH = os.getcwd() + "/runs/"
-    
+ 
     def fix_old_config():
         def fix(arg, default_value):
             args.__dict__[arg] = default_value
@@ -108,15 +87,16 @@ if __name__ == "__main__":
         #fix input_shape
         try:
             args.state_shape = tuple(args.state_shape)
-            #args.action_shape = eval(args.action_shape)
         except:
             try:
-
                 args.state_shape = eval(args.input_shape)
-                args.action_shape = (1,) #???
             except:
                 fix('state_shape', (1, 210, 160))
-                args.action_shape = (1,)
+        
+        try:
+            args.action_shape = tuple(args.action_shape)
+        except:
+            args.action_shape = None
 
         #fix colour
         try:
@@ -131,7 +111,7 @@ if __name__ == "__main__":
             fix('model', "auto-encoder")
 
         try:
-            args.latent_shape
+            args.latent_shape = tuple(args.latent_shape)
         except:
             fix('latent_shape', args.latent_size)
 
@@ -146,7 +126,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.save_path is None:
-        args.save_path = DEFAULT_SAVE_PATH + args.run
+        args.save_path = DEFAULT_SAVE_PATH
+    
+    args.__dict__['run_path'] = args.save_path + "/runs/" + args.run
+    args.__dict__['result_path'] = args.save_path + "/results/" + args.run
 
     runs = wbu.get_runs(args.project)
     runs = {run.name:run for run in wbu.get_runs(args.project)}
@@ -154,15 +137,15 @@ if __name__ == "__main__":
         raise ValueError("Invalid run: please choose from valid runs include:\n" + "\n".join(runs.keys()))
     
     run = runs[args.run]
-    if not os.path.isdir(args.save_path) or args.force:
-        wbu.download_files(run, path = args.save_path) #by default the files wont be replaced if they are local
+    if not os.path.isdir(args.run_path) or args.force:
+        wbu.download_files(run, path = args.run_path) #by default the files wont be replaced if they are local
     else:
-        print("-- local data found at {0}, skipping download.".format(args.save_path))
+        print("-- local data found at {0}, skipping download.".format(args.run_path))
     
     print("-- loading model...")
 
     #find all models
-    config = fu.load(args.save_path + "/config.yaml")
+    config = fu.load(args.run_path + "/config.yaml")
     print("-- found config:")
 
     args.__dict__.update({k:config[k]['value'] for k in config if isinstance(config[k], dict) and not k.startswith("_")})
@@ -173,18 +156,20 @@ if __name__ == "__main__":
     pprint(args.__dict__, indent=4)
 
     model, model_file = load.MODEL[args.model](args)
-    histogram_path = args.save_path + "/media/histogram-{0}.png"
-    roc_path = args.save_path + "/media/roc.png"
-    results_path = args.save_path + "/metrics/results.txt"
+    histogram_path = args.result_path + "/media/histogram-{0}.png"
+    roc_path = args.result_path + "/media/roc.png"
+    results_path = args.result_path + "/metrics/results.txt"
     results = fu.save(results_path, "")
+
+    #make the directories...
+    fu.mkdir(args.result_path + "/media")
+    fu.mkdir(args.result_path + "/metrics")
 
     print("-- successfully loaded model: {0}".format(model_file))
 
     roc_x = []
     roc_y = []
     roc_legend = []
-
-    fu.save(args.save_path + "/media/temp.txt", "") #just to create the dir... TODO remove
 
     print("-- evaluating model")
     for anomaly, episodes in live_load_anomaly(args):

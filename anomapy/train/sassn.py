@@ -40,7 +40,6 @@ if __name__ == "__main__":
     def run():
 
         print("-- initialising model...")
-        model = CNet2(args.state_shape, args.latent_shape).to(args.device)
 
         state_model = CNet2(args.state_shape, args.latent_shape).to(args.device)
         action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0]).to(args.device)

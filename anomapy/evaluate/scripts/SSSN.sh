@@ -1,4 +1,6 @@
-#python -m anomapy.evaluate.evaluate -run sssn-Qbert-20200201174700
+python -m anomapy.evaluate.evaluate -run sssn-SpaceInvaders-20200204121140
+python -m anomapy.evaluate.evaluate -run sssn-Enduro-20200204112237
+python -m anomapy.evaluate.evaluate -run sssn-Qbert-20200201174700
 python -m anomapy.evaluate.evaluate -run sssn-Seaquest-20200201152942
 python -m anomapy.evaluate.evaluate -run sssn-Pong-20200201143322
 python -m anomapy.evaluate.evaluate -run sssn-Breakout-20200201133440

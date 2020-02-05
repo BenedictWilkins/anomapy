@@ -9,7 +9,7 @@ import re
 import os
 
 def get_model_files(args):
-    return [file for file in fu.files(args.save_path, full=True) if "model" in file or file.endswith(".pt")] 
+    return [file for file in fu.files(args.run_path, full=True) if "model" in file or file.endswith(".pt")] 
 
 def load_model(model, args):
     files = fu.sort_files(get_model_files(args))
@@ -29,12 +29,15 @@ def load_sssn(args):
     model = CNet2(args.state_shape, args.latent_shape).to(args.device)
     return load_model(model, args)
 
-
-
-
 def load_sassn(args):
-    raise NotImplementedError()
+    from pyworld.toolkit.nn.CNet import CNet2
+    from pyworld.toolkit.nn.MLP import MLP
+    from pyworld.algorithms.optimise.TripletOptimiser import SASTripletOptimiser
 
+    state_model = CNet2(args.state_shape, args.latent_shape).to(args.device)
+    action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0]).to(args.device)
+    model = SASTripletOptimiser.SASModel(state_model, action_model) #the model class is part of the optimiser
+    return load_model(model, args)
 
 MODEL = {'auto-encoder':load_autoencoder, 
          'sssn':load_sssn,

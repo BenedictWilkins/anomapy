@@ -244,6 +244,8 @@ def block(episode, ratio=0.1):
 
 
 
+
+
 # ==================================================================================
 
 FREEZE = freeze.__name__
@@ -260,7 +262,7 @@ ANOMALIES = [FILL, BLOCK, FREEZE, FREEZE_SKIP, SPLIT_HORIZONTAL, SPLIT_VERTICAL]
 
 
 if __name__ == "__main__":
-    
+
     import load
     import pyworld.toolkit.tools.gymutils as gu
     import pyworld.toolkit.tools.fileutils as fu
