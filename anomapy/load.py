@@ -4,9 +4,14 @@ import pyworld.toolkit.tools.visutils as vu
 import pyworld.toolkit.tools.datautils as du
 import pyworld.toolkit.tools.torchutils as tu
 
+from types import SimpleNamespace
+
 import numpy as np
 import re
 import os
+import gym
+
+
 
 def get_model_files(args):
     return [file for file in fu.files(args.run_path, full=True) if "model" in file or file.endswith(".pt")] 
@@ -79,6 +84,10 @@ HYPER_PARAMETERS = {BEAMRIDER:H_BEAMRIDER, BREAKOUT:H_BREAKOUT, ENDURO:H_ENDURO,
                     PONG:H_PONG, QBERT:H_QBERT, SEAQUEST:H_SEAQUEST, 
                     SPACEINVADERS:H_SPACEINVADERS}
 
+def make_all():
+    for env in ENVIRONMENTS:
+        yield gym.make(env + NO_FRAME_SKIP)
+
 def set_path(path):
     global PATH
     PATH = path
@@ -97,7 +106,20 @@ def files_clean(env):
 def files_anomaly(env):
     return fu.sort_files([file for file in fu.files(PATH_ANOMALY(env), full=True)])
 
+# --------------------- ACTION INFORMATION ----------------------- #
+# Some of the actions in each game are redundant, we need to transform the actions to include only those that are distinct.
+action_transform = SimpleNamespace(**{BEAMRIDER:[], 
+                                    BREAKOUT:[],
+                                    ENDURO:[],
+                                    PONG:[0,0,1,2,1,2],
+                                    QBERT:[],
+                                    SEAQUEST:[],
+                                    SPACEINVADERS:[]})
+
+#TODO change the name of this ...
+#ACTION_SHAPES = {k:len(np.unique(v)) for k,v in action_transform.__dict__.items()}
 ACTION_SHAPES = {BEAMRIDER:9, BREAKOUT:4, ENDURO:9, PONG:6, QBERT:6, SEAQUEST:18, SPACEINVADERS:6}
+
 
 def __load__(files, *args):
     for file in files:
@@ -121,11 +143,11 @@ def load(path, *args, limit=None):
     else:
         return __load__(files, *args)   
 
-def load_raw(env, limit=None):
-    return load(PATH_RAW(env), 'state', 'action', limit=limit)
+def load_raw(env, limit=None, types=['state', 'action']):
+    return load(PATH_RAW(env), *types, limit=limit)
 
-def load_clean(env, limit=None):
-    return load(PATH_CLEAN(env), 'state', 'action', limit=limit)
+def load_clean(env, limit=None, types=['state', 'action']):
+    return load(PATH_CLEAN(env), *types, limit=limit)
 
 def load_anomaly(env, anomaly=None, limit=None):
     if anomaly is not None:
@@ -140,6 +162,12 @@ def load_anomaly(env, anomaly=None, limit=None):
 
 def transform(episode, args):
     states = episode['state'].astype(np.float32) / 255. #convert to CHW format
+
+    #remove redundant actions and convert to int64
+    episode['action'][-1] = 0 #remove last value which is always nan
+    #episode['action'] = np.array(action_transform.__dict__[args.env], dtype=np.int64)[episode['action'].astype(np.int64)][:,np.newaxis]
+    episode['action'] = episode['action'].astype(np.int64)[:,np.newaxis]
+
     if not args.colour:
         states = vu.transform.gray(states)
         if args.binary:

@@ -56,13 +56,14 @@ if __name__ == "__main__":
 
     DEFAULT_SAVE_PATH = os.getcwd()
 
-
     def score_anomaly(model, episodes):
         labels = []
         scores = []
         mscore = model_score.MODELS[args.model]
+        aggregate = model_score.aggregate.__dict__[args.agg]
+        print("USING AGGREGATE: {0}".format(args.agg))
         for episode in episodes:
-            label, score = mscore.score(model, episode)
+            label, score = mscore.score(model, episode, agg=aggregate)
             labels.append(label)
             scores.append(score)
         return np.concatenate(labels), np.concatenate(scores)
@@ -111,9 +112,13 @@ if __name__ == "__main__":
             fix('model', "auto-encoder")
 
         try:
-            args.latent_shape = tuple(args.latent_shape)
+            if isinstance(args.latent_shape, int):
+                args.latent_shape = (args.latent_shape, )
+            else:
+                args.latent_shape = tuple(args.latent_shape)
         except:
             fix('latent_shape', args.latent_size)
+        
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-run", type=str, required=True)
@@ -122,6 +127,7 @@ if __name__ == "__main__":
     parser.add_argument("-save_path", type=str, default=None)
     parser.add_argument("-force", type=bool, default=False, help="will re-download from wandb cloud and force overwrite any files.")
     parser.add_argument("-index", type=int, default=-1, help="the index of the model to evaluate (-1 is the most recent model file)")
+    parser.add_argument("-agg", type=str, default='sum', choices=list(model_score.aggregate.__dict__.keys()))
 
     args = parser.parse_args()
 
@@ -176,7 +182,7 @@ if __name__ == "__main__":
         print("---- computing score")
         label, score = score_anomaly(model, episodes) # get scores
 
-        fig = histogram(label, score, bins=20, title=anomaly)
+        fig = histogram(label, score, bins=50, title=anomaly)
         fig.write_image(histogram_path.format(anomaly))
 
         fpr, tpr = roc(label, score)

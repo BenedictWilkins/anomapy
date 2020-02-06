@@ -2,9 +2,6 @@ from pyworld.algorithms.optimise.TripletOptimiser import SASTripletOptimiser, mo
 from pyworld.toolkit.nn.CNet import CNet2
 from pyworld.toolkit.nn.MLP import MLP
 
-
-
-
 import pyworld.toolkit.tools.gymutils as gu
 import pyworld.toolkit.tools.fileutils as fu
 import pyworld.toolkit.tools.visutils as vu

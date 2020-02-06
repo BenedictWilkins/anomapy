@@ -9,22 +9,52 @@ from pyworld.toolkit.tools.visutils.transform import CHW, HWC, isCHW, isHWC
 
 import os
 
+import copy
+
 SUPRESS_WARNINGS = False
 
 def CHW_format(func):
+
+    def _CHW(episode):
+        episode['state'] = CHW(episode['state'])
+        return episode
+    def _HWC(episode):
+        episode['state'] = HWC(episode['state'])
+        return episode
     
     @wraps(func)
     def CHW_wrapper(episode, *args, **kwargs):
-        if isHWC(episode):
+        if isHWC(episode['state']):
             if not SUPRESS_WARNINGS:    
                 print("Warning: function \"{0}\" requires NCHW format, transforming from assumed NHWC format.".format(func.__name__))
-            e, *r = func(CHW(episode), *args, **kwargs)
-            return (HWC(e), *r)
-            
+            e, *r = func(_CHW(episode), *args, **kwargs)
+            return (_HWC(e), *r)
         return func(episode)
 
     return CHW_wrapper
 
+def action(episode, ratio=0.05):
+    '''
+        Replaces an action with a random action (that is not equal to the original).
+    '''
+    episode = copy.deepcopy(episode)
+    action = episode['action']
+
+    u_actions = np.arange(0, max(action))
+
+    size = int(ratio * action.shape[0]) 
+    index = np.random.randint(0, action.shape, size=size)
+    
+    rand = np.random.randint(1, len(u_actions), size=size)
+
+    action[index] = (action[index] + rand) % len(u_actions)
+
+    labels = np.zeros(action.shape[0], dtype=bool)
+    labels[index] = True
+
+    episode['action'] = action #...?
+
+    return episode, labels
 
 def freeze(episode, ratio=0.05, freeze_for=(4, 16)):
     '''
@@ -47,10 +77,13 @@ def freeze(episode, ratio=0.05, freeze_for=(4, 16)):
     '''
     assert freeze_for[0] < freeze_for[1]
 
-    episode = np.copy(episode)
+    episode = copy.deepcopy(episode)
 
-    size = int(ratio * episode.shape[0])
-    a_indx = np.sort(np.random.choice(episode.shape[0], size=size, replace=False))
+    state = episode['state']
+    action = episode['action']
+
+    size = int(ratio * state.shape[0])
+    a_indx = np.sort(np.random.choice(state.shape[0], size=size, replace=False))
     freeze_for = np.random.randint(low=freeze_for[0], high=freeze_for[1], size=a_indx.shape[0])
     
     #build index
@@ -61,16 +94,19 @@ def freeze(episode, ratio=0.05, freeze_for=(4, 16)):
         result.extend([a_indx[i]] * freeze_for[i])
         j = a_indx[i]
         
-    result.extend([k for k in range(j, episode.shape[0])])
+    result.extend([k for k in range(j, state.shape[0])])
 
-    anomaly_index = np.zeros(episode.shape[0], dtype=bool)
+    anomaly_index = np.zeros(state.shape[0], dtype=bool)
     anomaly_index[a_indx] = True
 
-    episode = episode[result]
+    episode['state'] = state[result]
+    episode['action'] = action[result]
+
+    assert episode['action'].shape[0] == episode['state'].shape[0] #sanity check
 
     anomaly_index = anomaly_index[result]
     anomaly_index[a_indx + np.cumsum(freeze_for) - freeze_for] = False #the first frame of a freeze is not an anomaly
-    
+
     return episode, anomaly_index
 
 def freeze_skip(episode, ratio=0.05, freeze_for=(4, 16)):
@@ -92,19 +128,24 @@ def freeze_skip(episode, ratio=0.05, freeze_for=(4, 16)):
     '''
     assert freeze_for[0] < freeze_for[1]
     
-    episode = np.copy(episode)
+    episode = copy.deepcopy(episode)
+    state = episode['state']
 
-    size = int(ratio * episode.shape[0])
-    a_indx = np.sort(np.random.choice(episode.shape[0], size=size, replace=False))
+    size = int(ratio * state.shape[0])
+    a_indx = np.sort(np.random.choice(state.shape[0], size=size, replace=False))
     freeze_for = np.random.randint(low=freeze_for[0], high=freeze_for[1], size=a_indx.shape[0])
-    freeze_frames = episode[a_indx]
+    freeze_frames = state[a_indx]
+    #freeze_frames_a = action[a_indx]
     
-    anomaly_index = np.zeros(episode.shape[0], dtype=bool)
+    anomaly_index = np.zeros(state.shape[0], dtype=bool)
 
     for i in range(a_indx.shape[0]):
-        episode[a_indx[i]+1:a_indx[i] + freeze_for[i]] = freeze_frames[i] #first frame of freeze is already filled...
-        anomaly_index[a_indx[i]+1:a_indx[i] + freeze_for[i]] = True
+        state[a_indx[i]+1:a_indx[i] + freeze_for[i]] = freeze_frames[i] #first frame of freeze is already filled...
+        #action[a_indx[i]+1:a_indx[i] + freeze_for[i]] = freeze_frames_a[i] #??? we want to repeat the action? or leave it?
 
+        anomaly_index[a_indx[i]+1:a_indx[i] + freeze_for[i]] = True
+    
+    assert episode['action'].shape[0] == episode['state'].shape[0] #sanity check
 
     return episode, anomaly_index
     
@@ -128,25 +169,26 @@ def split(episode, ratio=0.05, vertical=False, horizontal=True):
     '''
     assert vertical or horizontal
 
-    episode = np.copy(episode)
+    episode = copy.deepcopy(episode)
+    state = episode['state']
 
-    size = int(ratio * episode.shape[0]) 
-    indx = np.random.choice(episode.shape[0], size=size, replace=False)
-    indx = np.concatenate((indx[:,np.newaxis], np.random.randint(0, episode.shape[0], indx.shape[0])[:,np.newaxis]), axis=1)
+    size = int(ratio * state.shape[0]) 
+    indx = np.random.choice(state.shape[0], size=size, replace=False)
+    indx = np.concatenate((indx[:,np.newaxis], np.random.randint(0, state.shape[0], indx.shape[0])[:,np.newaxis]), axis=1)
 
     if vertical:
-        i = int(episode.shape[-1]/2)
+        i = int(state.shape[-1]/2)
         slice = [np.s_[i:], np.s_[:i]]
         for i1, i2 in indx:
-            episode[i1,:,:,slice[np.random.randint(0,2)]] = episode[i2,:,:,slice[np.random.randint(0,2)]]
+            state[i1,:,:,slice[np.random.randint(0,2)]] = state[i2,:,:,slice[np.random.randint(0,2)]]
     if horizontal:
-        i = int(episode.shape[-2]/2)
+        i = int(state.shape[-2]/2)
         slice = [np.s_[i:], np.s_[:i]]
         for i1, i2 in indx:
-            episode[i1,:,slice[np.random.randint(0,2)],:] = episode[i2,:,slice[np.random.randint(0,2)],:]
+            state[i1,:,slice[np.random.randint(0,2)],:] = state[i2,:,slice[np.random.randint(0,2)],:]
 
     anom_indx = indx[:,0]
-    labels = np.zeros(episode.shape[0], dtype=bool)
+    labels = np.zeros(state.shape[0], dtype=bool)
     labels[anom_indx] = True
 
     return episode, labels
@@ -164,51 +206,52 @@ def fill(episode, ratio=0.05, colour=None, duration=(1,5)):
         Returns:
             episode, labels (0 = normal, 1 = anomaly)
     '''
-    if colour is not None:
-        assert episode.shape[1] == len(colour)
-    else:
-        colour = [0] * episode.shape[1]
-    colour = np.array(colour)[:, np.newaxis, np.newaxis]
-    
-    episode = np.copy(episode)
+    episode = copy.deepcopy(episode)
+    state = episode['state']
 
-    size = int(ratio * episode.shape[0])
-    a_indx = np.sort(np.random.choice(episode.shape[0], size=size, replace=False))
+    if colour is not None:
+        assert state.shape[1] == len(colour)
+    else:
+        colour = [0] * state.shape[1]
+    colour = np.array(colour)[:, np.newaxis, np.newaxis]
+
+    size = int(ratio * state.shape[0])
+    a_indx = np.sort(np.random.choice(state.shape[0], size=size, replace=False))
     fill_for = np.random.randint(low=duration[0], high=duration[1], size=a_indx.shape[0])
 
-    labels = np.zeros(episode.shape[0], dtype=bool)
+    labels = np.zeros(state.shape[0], dtype=bool)
 
     for i in range(a_indx.shape[0]):
-        episode[a_indx[i]:a_indx[i] + fill_for[i]] = colour
+        state[a_indx[i]:a_indx[i] + fill_for[i]] = colour
         labels[a_indx[i]:a_indx[i] + fill_for[i]] = True
         
     return episode, labels
 
 @CHW_format
 def fade(episode, ratio=0.05, colour=None, sigma=1., kernel_size=5):
+        
+    episode = copy.deepcopy(episode)
+    state = episode['state']
 
     if colour is not None:
-        assert episode.shape[1] == len(colour)
+        assert state.shape[1] == len(colour)
     else:
-        colour = [0] * episode.shape[1]
+        colour = [0] * state.shape[1]
         
     colour = np.array(list(colour))
-    episode = np.copy(episode)
 
-    signal = np.random.choice([0.,1.], size=episode.shape[0], p=[1-ratio, ratio])
+
+    signal = np.random.choice([0.,1.], size=state.shape[0], p=[1-ratio, ratio])
     signal = convolve1D_gauss(signal, sigma=sigma, kernel_size=kernel_size)[:, np.newaxis, np.newaxis, np.newaxis]
     colour = colour[np.newaxis, :, np.newaxis, np.newaxis]
     
-    dif = colour - episode
+    dif = colour - state
 
-    episode = episode + signal * dif
+    episode['state'] = state + signal * dif
 
     labels = (signal[:,0,0,0] > 0.05) #maybe change this value...?
     
     return episode, labels
-
-def action_anomaly(episode, ratio=0.1, duration=(1,5)):
-    assert len(episode.shape) == 1 #episode should be actions!
    
 @CHW_format
 def block(episode, ratio=0.1):
@@ -221,30 +264,28 @@ def block(episode, ratio=0.1):
         Returns:
             episode, normal index, anomaly index
     '''
-    episode = np.copy(episode)
+        
+    episode = copy.deepcopy(episode)
+    state = episode['state']
 
-    size = int(ratio * episode.shape[0]) 
-    anom_indx = np.random.choice(episode.shape[0], size=size, replace=False)
+    size = int(ratio * state.shape[0]) 
+    anom_indx = np.random.choice(state.shape[0], size=size, replace=False)
 
-    if np.max(episode) > 1:
+    if np.max(state) > 1:
         random = lambda: np.random.randint(0, 256)
     else:
         random = lambda: np.random.uniform()
     
     for i in anom_indx:
-        y1, y2 = np.random.randint(0, episode.shape[-2], size=2)
-        x1, x2 = np.random.randint(0, episode.shape[-1], size=2)
-        for j in range(episode.shape[1]):
-            episode[i,j,min(y1, y2):max(y1, y2),min(x1, x2):max(x1, x2)] = random()
+        y1, y2 = np.random.randint(0, state.shape[-2], size=2)
+        x1, x2 = np.random.randint(0, state.shape[-1], size=2)
+        for j in range(state.shape[1]):
+            state[i,j,min(y1, y2):max(y1, y2),min(x1, x2):max(x1, x2)] = random()
         
-    labels = np.zeros(episode.shape[0], dtype=bool)
+    labels = np.zeros(state.shape[0], dtype=bool)
     labels[anom_indx] = True
         
     return episode, labels
-
-
-
-
 
 # ==================================================================================
 
@@ -254,8 +295,9 @@ SPLIT_HORIZONTAL = split_horizontal.__name__
 SPLIT_VERTICAL = split_vertical.__name__
 FILL = fill.__name__
 BLOCK = block.__name__
+ACTION = action.__name__
 
-ANOMALIES = [FILL, BLOCK, FREEZE, FREEZE_SKIP, SPLIT_HORIZONTAL, SPLIT_VERTICAL]
+ANOMALIES = [ACTION, FILL, BLOCK, FREEZE, FREEZE_SKIP, SPLIT_HORIZONTAL, SPLIT_VERTICAL]
 
 # ==================================================================================
  
@@ -298,7 +340,7 @@ if __name__ == "__main__":
             
         meta_f.close()
 
-    def generate_visual_anomalies(env, *anomalies):
+    def generate_anomalies(env, *anomalies, prob=0.05):
         
         len_episodes = len(load.files_raw(env))
         len_anomalies = len(anomalies)
@@ -312,18 +354,19 @@ if __name__ == "__main__":
         meta_f = fu.save(meta_file, "{0}\n".format(env))
         
         columns_ = "{0:<16} {1:<20} {2:<20} {3:<6}\n"
+        
+        meta_f.write("INFO: anomaly prob: {0}".format(prob))
         meta_f.write("--------------------------------------------------------------------------------\n")
         meta_f.write(columns_.format('EPISODE', 'ANOMALY', 'SHAPE', 'A_COUNT'))
         meta_f.write("--------------------------------------------------------------------------------\n")
         
-        
         for i, fe in enumerate(load.load_raw(env)):
-            file, episode = fe
+            file, base_episode = fe
             if i >= len(_anom):
                 break
             anom = _anom[i]
             
-            episode['state'], episode['label'] = anom(episode['state'], ratio=0.05)
+            episode, episode['label'] = anom(base_episode, ratio=prob)
             
             e_name = os.path.splitext(os.path.basename(file))[0]
             a_count = np.sum(episode['label'])
@@ -345,10 +388,10 @@ if __name__ == "__main__":
     
     #show_ca(load.BEAMRIDER)
     import numpy as np
-    anomalies = [fill, block, freeze, freeze_skip, split_horizontal, split_vertical]
+    anomalies = [fill, block, freeze, freeze_skip, split_horizontal, split_vertical, action]
     for env in load.ENVIRONMENTS:
-        #for anom in ANOMALIES:
-        #    show_ca(env, anom)
+        for anom in ANOMALIES:
+            show_ca(env, anom)
 
         #_, episode = next(load.load_raw(env))
         #a_episode1, labels = split_horizontal(episode['state'], ratio=0.05)
@@ -358,12 +401,4 @@ if __name__ == "__main__":
         #break
         
         videos(env, *anomalies)
-        #generate_visual_anomalies(env, *anomalies)
-        
-    
-    
-
-
-
-        
-    
+        generate_anomalies(env, *anomalies)

@@ -51,7 +51,6 @@ def initialise(model):
         episodes.append(load.transform(episode, args))
     print("-- done, total frames: {0}".format(data_size))
 
-    #all shapes should be 
     args.__dict__['state_shape'] = tuple(episodes[0]['state'].shape[1:])
     if not args.env in load.ACTION_SHAPES:
         raise ValueError("could not find action shape for environment: {0}".format(args.env))
@@ -94,13 +93,8 @@ def states_actions(episodes, test_episodes=1, shuffle=True):
     print("---- {0:<3} train episodes".format(len(episodes) - test_episodes))
     print("---- {0:<3}  test episodes".format(test_episodes))
 
-    def transform_actions(actions):
-        actions = actions.astype(np.int64)
-        actions[-1] = 0 #the last value in an episode is nan
-        return actions[:,np.newaxis]
-
     states = [torch.from_numpy(e['state']) for e in episodes]
-    actions = [transform_actions(e['action']) for e in episodes]
+    actions = [e['action'] for e in episodes]
 
     episode_test = list(zip([states[-test_episodes]], [actions[-test_episodes]]))
     episodes =  list(zip(states[:-test_episodes], actions[:-test_episodes]))
