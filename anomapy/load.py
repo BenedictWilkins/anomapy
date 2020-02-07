@@ -3,6 +3,9 @@ import pyworld.toolkit.tools.fileutils as fu
 import pyworld.toolkit.tools.visutils as vu
 import pyworld.toolkit.tools.datautils as du
 import pyworld.toolkit.tools.torchutils as tu
+import pyworld.toolkit.tools.wbutils as wbu
+
+from pprint import pprint
 
 from types import SimpleNamespace
 
@@ -11,42 +14,6 @@ import re
 import os
 import gym
 
-
-
-def get_model_files(args):
-    return [file for file in fu.files(args.run_path, full=True) if "model" in file or file.endswith(".pt")] 
-
-def load_model(model, args):
-    files = fu.sort_files(get_model_files(args))
-    assert len(files) > 0 #no models found?
-    fu.load(files[args.index], model=model) #does not return anything to prevent a weird error...
-    return model, os.path.basename(files[args.index])
-
-def load_autoencoder(args):
-    import pyworld.toolkit.nn.autoencoder.AE as AE
-    encoder, decoder = AE.default2D(args.state_shape, args.latent_shape)
-    model = AE.AE(encoder, decoder).to(args.device)
-    return load_model(model, args)
-
-def load_sssn(args):
-    from pyworld.toolkit.nn.CNet import CNet2
-    print(args.state_shape)
-    model = CNet2(args.state_shape, args.latent_shape).to(args.device)
-    return load_model(model, args)
-
-def load_sassn(args):
-    from pyworld.toolkit.nn.CNet import CNet2
-    from pyworld.toolkit.nn.MLP import MLP
-    from pyworld.algorithms.optimise.TripletOptimiser import SASTripletOptimiser
-
-    state_model = CNet2(args.state_shape, args.latent_shape).to(args.device)
-    action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0]).to(args.device)
-    model = SASTripletOptimiser.SASModel(state_model, action_model) #the model class is part of the optimiser
-    return load_model(model, args)
-
-MODEL = {'auto-encoder':load_autoencoder, 
-         'sssn':load_sssn,
-         'sassn':load_sassn}
 
 NO_FRAME_SKIP = "NoFrameskip-v4"
 PATH = '~/Documents/repos/datasets/atari/'
@@ -176,33 +143,124 @@ def transform(episode, args):
     return episode 
 
 
+# -------------- MODEL LOADING --------------- #
 
-'''
-def load(path, binary=False, binary_threshold = 0.5):
-    episode = fu.load(path)['state'][...].astype(np.float32) / 255. #convert to CHW format
-    episode = vu.transform.gray(episode)
-    if binary:
-        episode = vu.transform.binary(episode, binary_threshold)
-    episode = vu.transform.CHW(episode) 
-    return episode, episode.shape[1:]
+def fix_old_config(args):
+    def fix(arg, default_value):
+        args.__dict__[arg] = default_value
+        print("---- Warning: config doesnt contain: {0} using default value: {1}".format(arg, default_value))
 
-def load_all(*paths, binary=False, binary_threshold = 0.5, max_size=2000):
-    size = 0
-    episodes = []
-    for path in paths:
-        episode = load(path, binary=binary, binary_threshold=binary_threshold)[0]
-        if size + episode.shape[0] > max_size:
-            episode = episode[:max_size - size]
-            episodes.append(episode)
-            break
-        size += episode.shape[0]
-        episodes.append(episode)
-        
+    #fix input_shape
+    try:
+        args.state_shape = tuple(args.state_shape)
+    except:
+        try:
+            args.state_shape = eval(args.input_shape)
+        except:
+            fix('state_shape', (1, 210, 160))
+    
+    try:
+        args.action_shape = tuple(args.action_shape)
+    except:
+        args.action_shape = None
 
-    episodes = np.concatenate(episodes, axis=0)
-    return episodes, episodes.shape[1:]
-'''
+    #fix colour
+    try:
+        args.colour
+    except:
+        fix('colour', False)
+    
+    #fix model
+    try:
+        args.model
+    except:
+        fix('model', "auto-encoder")
+
+    try:
+        if isinstance(args.latent_shape, int):
+            args.latent_shape = (args.latent_shape, )
+        else:
+            args.latent_shape = tuple(args.latent_shape)
+    except:
+        fix('latent_shape', args.latent_size)
+
+def get_model_files(args):
+    return [file for file in fu.files(args.run_path, full=True) if "model" in file or file.endswith(".pt")] 
+
+def __load_model__(model, args):
+    files = fu.sort_files(get_model_files(args))
+    assert len(files) > 0 #no models found?
+    fu.load(files[args.index], model=model) #does not return anything to prevent a weird error...
+    return model, os.path.basename(files[args.index])
+
+def load_autoencoder(args):
+    import pyworld.toolkit.nn.autoencoder.AE as AE
+    encoder, decoder = AE.default2D(args.state_shape, args.latent_shape)
+    model = AE.AE(encoder, decoder).to(args.device)
+    return __load_model__(model, args)
+
+def load_sssn(args):
+    from pyworld.toolkit.nn.CNet import CNet2
+    print(args.state_shape)
+    model = CNet2(args.state_shape, args.latent_shape).to(args.device)
+    return __load_model__(model, args)
+
+def load_sassn(args):
+    from pyworld.toolkit.nn.CNet import CNet2
+    from pyworld.toolkit.nn.MLP import MLP
+    from pyworld.algorithms.optimise.TripletOptimiser import SASTripletOptimiser
+
+    state_model = CNet2(args.state_shape, args.latent_shape).to(args.device)
+    action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0]).to(args.device)
+    model = SASTripletOptimiser.SASModel(state_model, action_model) #the model class is part of the optimiser
+    return __load_model__(model, args)
+
+MODEL = {'auto-encoder':load_autoencoder, 
+         'sssn':load_sssn,
+         'sassn':load_sassn}
+
+def load_model(args):
+    
+    try:
+        if args.save_path is None:
+            args.save_path = os.getcwd()
+    except:
+        print("---- warning: save_path arg was not found, using: {0}".format(str(os.getcwd())))
+        args.save_path = os.getcwd() #save path was not found, but is required!
 
 
+    if not 'force' in args.__dict__:
+        args.__dict__['force'] = False
+    if not 'index' in args.__dict__:
+        args.__dict__['index'] = -1
 
+    args.__dict__['run_path'] = args.save_path + "/runs/" + args.run
+
+    runs = wbu.get_runs(args.project)
+    runs = {run.name:run for run in wbu.get_runs(args.project)}
+    if args.run not in runs:
+        raise ValueError("Invalid run: please choose from valid runs include:\n" + "\n".join(runs.keys()))
+    
+    run = runs[args.run]
+    if not os.path.isdir(args.run_path) or args.force:
+        wbu.download_files(run, path = args.run_path) #by default the files wont be replaced if they are local
+    else:
+        print("-- local data found at {0}, skipping download.".format(args.run_path))
+    
+    print("-- loading model...")
+
+    #find all models
+    config = fu.load(args.run_path + "/config.yaml")
+    print("-- found config:")
+
+    args.__dict__.update({k:config[k]['value'] for k in config if isinstance(config[k], dict) and not k.startswith("_")})
+    args.__dict__.update(HYPER_PARAMETERS[args.env]) #if not colour these args are required for the data transform
+
+    fix_old_config(args) #fix some old config problems
+
+    pprint(args.__dict__, indent=4)
+
+    model, _ = MODEL[args.model](args)
+
+    return model
     

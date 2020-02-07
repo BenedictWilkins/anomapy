@@ -99,7 +99,6 @@ def states_actions(episodes, test_episodes=1, shuffle=True):
     episode_test = list(zip([states[-test_episodes]], [actions[-test_episodes]]))
     episodes =  list(zip(states[:-test_episodes], actions[:-test_episodes]))
 
-
     print("-- done.")
     return episodes, episode_test
 

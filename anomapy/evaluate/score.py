@@ -63,20 +63,19 @@ def split_subsequence_load(env, anomaly, split=16):
 aggregate = types.SimpleNamespace(sum=lambda x: np.sum(x, axis=1), max=lambda x: np.max(x, axis=1))
 
 class autoencoder:
-    
-    def score(model, episode, agg=aggregate.sum):
-        x = torch.from_numpy(episode['state'])
+
+    def score_raw(model, episode):
+        x = tu.to_torch(episode['state'])
         model.eval()
         z = tu.collect(model, x)
         model.train()
         y = F.binary_cross_entropy_with_logits(z, x, reduction='none')
+        return tu.to_numpy(y.reshape(y.shape[0], -1).sum(1))
+    
+    def score(model, episode, agg=aggregate.sum):
+        score = autoencoder.score_raw(model, episode)
 
-        score = tu.to_numpy(y.reshape(y.shape[0], -1).sum(1))
         split = subsequences(episode, score)
-
-        #print(split['score'].shape)
-        #print(split['label'].shape)
-        print(agg(np.array([[1,1], [1,2]])))
 
         score = agg(split['score'])
 
@@ -86,14 +85,18 @@ class autoencoder:
         return label, score
 
 class sssn:
-    
-    def score(model, episode, agg=aggregate.sum):
+
+    def score_raw(model, episode):
+
         model.eval()
-        z = tu.collect(model, torch.from_numpy(episode['state']))
+        z = tu.collect(model, tu.to_torch(episode['state']))
         model.train()
 
         score = ((z[:-1] - z[1:]) ** 2).sum(1) #L22 distance by default?
-        score = np.pad(tu.to_numpy(score), (0,1), 'constant') #assign 0 to the last value
+        return np.pad(tu.to_numpy(score), (0,1), 'constant') #assign 0 to the last value
+    
+    def score(model, episode, agg=aggregate.sum):
+        score = sssn.score_raw(model, episode)
 
         # this is old now... but might be useful at some point
         #label = episode['label']
@@ -116,19 +119,20 @@ class sssn:
 
 class sassn:
 
-    def score(model, episode, agg=aggregate.sum):
-        states = torch.from_numpy(episode['state'])
+    def score_raw(model, episode):
+        states = tu.to_torch(episode['state'])
         actions = du.onehot(episode['action'].astype(np.uint8), size=model.action_space.shape[0]) #make one-hot!
-        actions = torch.from_numpy(actions)
+        actions = tu.to_torch(actions)
         
-        #print(states.shape, actions.shape)
-
         model.eval()
         score = tu.collect(model.distance, states[:-1],  actions[:-1], states[1:])
         model.train()
         
-        score = np.pad(tu.to_numpy(score), (0,1), 'constant') #assign 0 to the last value
-        print(agg(np.array([[1,1], [1,2]])))
+        return np.pad(tu.to_numpy(score), (0,1), 'constant') #assign 0 to the last value
+
+
+    def score(model, episode, agg=aggregate.sum):
+        score = sassn.score_raw(model, episode)
 
         split = subsequences(episode, score)
         score = agg(split['score'][:,:-1]) 

@@ -32,6 +32,46 @@ from sklearn.metrics import auc
 
 import plotly.graph_objects as go
 
+def score_anomaly(model, episodes, args):
+    labels = []
+    scores = []
+    mscore = model_score.MODELS[args.model]
+    aggregate = model_score.aggregate.__dict__[args.agg]
+    print("USING AGGREGATE: {0}".format(args.agg))
+    for episode in episodes:
+        label, score = mscore.score(model, episode, agg=aggregate)
+        labels.append(label)
+        scores.append(score)
+    return np.concatenate(labels), np.concatenate(scores)
+    
+def load_episodes(anomaly, args):
+    return [load.transform(e, args) for f,e in load.load_anomaly(args.env, anomaly=anomaly)]
+
+def live_load_anomaly(args):
+    for anomaly in video_anomaly.ANOMALIES:
+        print("---- loading anomaly data: {0}".format(anomaly))
+        yield anomaly, load_episodes(anomaly, args)
+
+def load_anomaly(args, anomalies=None):
+    return {anomaly: load_episodes(anomaly, args) for anomaly in video_anomaly.ANOMALIES}
+
+def initialise():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-run", type=str, required=True)
+    parser.add_argument("-device", type=str, default = tu.device()) 
+    parser.add_argument("-project", type=str, default="benedict-wilkins/anomapy")   
+    parser.add_argument("-save_path", type=str, default=None)
+    parser.add_argument("-force", type=bool, default=False, help="will re-download from wandb cloud and force overwrite any files.")
+    parser.add_argument("-index", type=int, default=-1, help="the index of the model to evaluate (-1 is the most recent model file)")
+    parser.add_argument("-agg", type=str, default='sum', choices=list(model_score.aggregate.__dict__.keys()))
+
+    args = parser.parse_args()
+
+    model = load.load_model(args)
+    args.__dict__['result_path'] = args.save_path + "/results/" + args.run
+
+    return model, args
+
 def roc(label, score):
     assert label.shape[0] == score.shape[0]
     fpr, tpr, _ = roc_curve(label, score)
@@ -54,114 +94,8 @@ def histogram(label, score, bins=10, log_scale=True, title=None):
 
 if __name__ == "__main__":
 
-    DEFAULT_SAVE_PATH = os.getcwd()
-
-    def score_anomaly(model, episodes):
-        labels = []
-        scores = []
-        mscore = model_score.MODELS[args.model]
-        aggregate = model_score.aggregate.__dict__[args.agg]
-        print("USING AGGREGATE: {0}".format(args.agg))
-        for episode in episodes:
-            label, score = mscore.score(model, episode, agg=aggregate)
-            labels.append(label)
-            scores.append(score)
-        return np.concatenate(labels), np.concatenate(scores)
+    model, args  = initialise()
         
-    def load_episodes(anomaly):
-        return [load.transform(e, args) for f,e in load.load_anomaly(args.env, anomaly=anomaly)]
-
-    def live_load_anomaly(args):
-        for anomaly in video_anomaly.ANOMALIES:
-            print("---- loading anomaly data: {0}".format(anomaly))
-            yield anomaly, load_episodes(anomaly)
-
-    def load_anomaly(args, anomalies=None):
-        return {anomaly: load_episodes(anomaly) for anomaly in video_anomaly.ANOMALIES}
-
- 
-    def fix_old_config():
-        def fix(arg, default_value):
-            args.__dict__[arg] = default_value
-            print("---- Warning: config doesnt contain: {0} using default value: {1}".format(arg, default_value))
-
-        #fix input_shape
-        try:
-            args.state_shape = tuple(args.state_shape)
-        except:
-            try:
-                args.state_shape = eval(args.input_shape)
-            except:
-                fix('state_shape', (1, 210, 160))
-        
-        try:
-            args.action_shape = tuple(args.action_shape)
-        except:
-            args.action_shape = None
-
-        #fix colour
-        try:
-            args.colour
-        except:
-            fix('colour', False)
-        
-        #fix model
-        try:
-            args.model
-        except:
-            fix('model', "auto-encoder")
-
-        try:
-            if isinstance(args.latent_shape, int):
-                args.latent_shape = (args.latent_shape, )
-            else:
-                args.latent_shape = tuple(args.latent_shape)
-        except:
-            fix('latent_shape', args.latent_size)
-        
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-run", type=str, required=True)
-    parser.add_argument("-device", type=str, default = tu.device()) 
-    parser.add_argument("-project", type=str, default="benedict-wilkins/anomapy")   
-    parser.add_argument("-save_path", type=str, default=None)
-    parser.add_argument("-force", type=bool, default=False, help="will re-download from wandb cloud and force overwrite any files.")
-    parser.add_argument("-index", type=int, default=-1, help="the index of the model to evaluate (-1 is the most recent model file)")
-    parser.add_argument("-agg", type=str, default='sum', choices=list(model_score.aggregate.__dict__.keys()))
-
-    args = parser.parse_args()
-
-    if args.save_path is None:
-        args.save_path = DEFAULT_SAVE_PATH
-    
-    args.__dict__['run_path'] = args.save_path + "/runs/" + args.run
-    args.__dict__['result_path'] = args.save_path + "/results/" + args.run
-
-    runs = wbu.get_runs(args.project)
-    runs = {run.name:run for run in wbu.get_runs(args.project)}
-    if args.run not in runs:
-        raise ValueError("Invalid run: please choose from valid runs include:\n" + "\n".join(runs.keys()))
-    
-    run = runs[args.run]
-    if not os.path.isdir(args.run_path) or args.force:
-        wbu.download_files(run, path = args.run_path) #by default the files wont be replaced if they are local
-    else:
-        print("-- local data found at {0}, skipping download.".format(args.run_path))
-    
-    print("-- loading model...")
-
-    #find all models
-    config = fu.load(args.run_path + "/config.yaml")
-    print("-- found config:")
-
-    args.__dict__.update({k:config[k]['value'] for k in config if isinstance(config[k], dict) and not k.startswith("_")})
-    args.__dict__.update(load.HYPER_PARAMETERS[args.env]) #if not colour these args are required for the data transform
-
-    fix_old_config() #fix some old config problems
-
-    pprint(args.__dict__, indent=4)
-
-    model, model_file = load.MODEL[args.model](args)
     histogram_path = args.result_path + "/media/histogram-{0}.png"
     roc_path = args.result_path + "/media/roc.png"
     results_path = args.result_path + "/metrics/results.txt"

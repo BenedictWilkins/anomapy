@@ -39,7 +39,45 @@ def test_action_transform():
     print(actions[:100])
     print(np.array(load.action_transform.__dict__[env])[actions][:100])
 
-#test_split()
-test_action_anomaly()
-#test_action_transform()
-#action_distributions()
+def distance_histograms():
+    #load model
+    import argparse
+    import pyworld.toolkit.tools.torchutils as tu
+    from .score import MODELS as MODEL_SCORE
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-run", type=str, required=True)
+    parser.add_argument("-device", type=str, default = tu.device()) 
+    parser.add_argument("-project", type=str, default="benedict-wilkins/anomapy")   
+    args = parser.parse_args()
+
+    model = load.load_model(args)
+    scores = []
+    for _, episode in load.load_raw(args.env):
+        episode = load.transform(episode, args)
+        score = MODEL_SCORE[args.model].score_raw(model, episode)
+        scores.append(score)
+    score = np.concatenate(scores)
+    vu.plot.histogram(score, bins=200, log_scale=True)
+
+#distance_histograms()
+
+
+#fig = vu.plot.plot(np.array([1,2,3]), np.array([1,2,3]))
+#image = fig.to_image()
+#print(type(image))
+
+def test_actions(env):
+    import gym
+    import pyworld.toolkit.tools.gymutils as gu
+    env = gym.make(env + load.NO_FRAME_SKIP)
+    for i in range(0, env.action_space.n):
+        print("ACTION {0}:{1}".format(i, env.get_action_meanings()[i]))
+        policy = lambda _: i
+        vu.play(gu.video(env, policy))
+
+test_actions(load.BREAKOUT)
+
+
+'''
+
+'''

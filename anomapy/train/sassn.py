@@ -20,8 +20,13 @@ from pprint import pprint
 
 from .. import load
 from . import initialise
+from ..evaluate import score
+
 
 if __name__ == "__main__":
+
+
+
     MODEL = "sassn"
 
     episodes, args = initialise.initialise(MODEL)
@@ -34,12 +39,15 @@ if __name__ == "__main__":
 
     args.__dict__.update(OPTIM_HYPERPARAMS)
 
+
+
     def run():
 
         print("-- initialising model...")
 
         state_model = CNet2(args.state_shape, args.latent_shape).to(args.device)
-        action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0]).to(args.device)
+        action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0],
+                            output_activation=F.leaky_relu).to(args.device)
 
         optim = SASTripletOptimiser(state_model, action_model, mode=args.optim_mode, margin=args.optim_margin, k=args.optim_k, lr=args.optim_lr)
         print("-- done.")
@@ -58,6 +66,8 @@ if __name__ == "__main__":
                 #    fig = vu.plot2D(model, episode_test, fig=fig, marker='-', draw=False)
                 #    image = wb.image(fig, "latent_space")
                 #    wb(latent_space=image)
+                s = score.MODELS[args.model].score_raw(optim.model, {'state':episode_test[0][0], 'action':episode_test[0][1]})
+                wb(distance=wb.histogram(s))
 
                 #each episode
                 for state, action in episodes:
@@ -70,7 +80,6 @@ if __name__ == "__main__":
                             wb(**optim.cma.recent())
                     
                     print("--- epoch:", e, optim.cma())
-                #optim.cma.reset()
 
                 if not e % 2:
                     print("--- saving model: epoch {0} step {1}".format(e, step))
