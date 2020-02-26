@@ -1,6 +1,4 @@
 def test_gpu():
-
-
     print("TESTING DEPENDANCIES:")
     import pyworld.toolkit.tools.torchutils as tu
     print("SUCCESS")

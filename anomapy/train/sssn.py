@@ -15,79 +15,76 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import argparse
 
+
+from types import SimpleNamespace
 from pprint import pprint
 
 from .. import load
 from . import initialise
+from ..evaluate import evaluate
 
-if __name__ == "__main__":
-    MODEL = "sssn"
+OPTIM_HYPERPARAMS = {"optim_mode":optim_mode.all,
+                     "optim_margin":0.2,
+                     "optim_k":16,
+                     "optim_lr":0.0005}
 
-    episodes, args = initialise.initialise(MODEL)
-    episodes, episode_test = initialise.states(episodes, test_episodes=1, shuffle=False)
+def default_config(env, shape, **kwargs):
+    return dict(env=env, model='sssn', latent_shape=2, state_shape=shape, action_shape=None, epochs=10, 
+                batch_size=64, device=tu.device(), colour=True, **OPTIM_HYPERPARAMS, **kwargs)
 
-    OPTIM_HYPERPARAMS = {"optim_mode":optim_mode.all,
-                         "optim_margin":0.2,
-                         "optim_k":16,
-                         "optim_lr":0.0005}
+def run(episodes, debug=False, save_every=4, **kwargs):
+    print("-- initialising model...")
+    model = CNet2(kwargs['state_shape'], kwargs['latent_shape']).to(kwargs['device'])
+    optim = SSTripletOptimiser(model, mode=kwargs['optim_mode'], margin=kwargs['optim_margin'], k=kwargs['optim_k'], lr=kwargs['optim_lr'])
+    print("-- done.")
 
-    args.__dict__.update(OPTIM_HYPERPARAMS)
+    wb = initialise.WB(model, **kwargs)
+    print("--- training... ")
 
-    def run():
+    with wb:
+        for e in range(1, kwargs['epochs'] + 1):
+            #monitoring...
+            #wb(roc = evaluator.roc_plot())
 
-        print("-- initialising model...")
-        model = CNet2(args.state_shape, args.latent_shape).to(args.device)
-        optim = SSTripletOptimiser(model, mode=args.optim_mode, margin=args.optim_margin, k=args.optim_k, lr=args.optim_lr)
-        print("-- done.")
+            #each episode
+            for episode in episodes:
+                for batch in du.batch_iterator(episode[:-1], episode[1:], batch_size=kwargs['batch_size'], shuffle=True):
+                    batch_state, batch_next_state = batch
+                    optim(batch_state, batch_next_state)
 
-        pprint(args.__dict__)
+                    if wb.step() % 100:
+                        wb(**optim.cma.recent())
+                        if debug:
+                            plot_eval(model, wb)
 
-        wb = initialise.WB(MODEL, model, args)
+                print("--- epoch:", e, optim.cma())
 
-        print("--- training... ")
-        fig = None
-
-        step = 0
-        with wb:
-            for e in range(1, args.epochs + 1):
-                if args.latent_shape == 2:
-                    fig = vu.plot2D(model, episode_test, fig=fig, marker='-', draw=False)
-                    image = wb.image(fig, "latent_space")
-                    wb(latent_space=image)
-
-                #each episode
-                for episode in episodes:
-                    for batch in du.batch_iterator(episode[:-1], episode[1:], batch_size=args.batch_size, shuffle=True):
-                        batch_state, batch_next_state = batch
-                        optim(batch_state, batch_next_state)
-
-                        step = wb.step()
-                        if step % 100:
-                            wb(**optim.cma.recent())
-                    
-                    print("--- epoch:", e, optim.cma())
-                #optim.cma.reset()
-
-                if not e % 2:
-                    print("--- saving model: epoch {0} step {1}".format(e, step))
-                    wb.save(overwrite=False)
-                    print("--- done")
-                    
-                    
-            wb.save(overwrite=False)
-            
-        print("\n\n\n\n", flush=True)
-
-    run()
+            if not e % save_every:
+                wb.save(overwrite=False)
+    
+    print("\n\n\n\n", flush=True)
+    return model
 
 #plt.ioff()
 #plt.show()
 
+if __name__ == "__main__":
 
+    episodes, args = initialise.initialise('sssn')
+    episodes = initialise.states(episodes, shuffle=False)
 
+    print("-- loading anomalies for live evaluation")
+    a_utils = load.anomaly_utils(args)
+    eval_episodes = a_utils.load_each()
+    eval_episodes = a_utils.to_torch(eval_episodes)
 
+    args.__dict__.update(OPTIM_HYPERPARAMS)
 
+    def plot_eval(model, wb):
+        if args.latent_shape == (2,):
+            for a, (a_episode, n_episode) in eval_episodes.items():
+                z_a = tu.to_numpy(tu.collect(model, a_episode['state']))
+                z_n = tu.to_numpy(tu.collect(model, n_episode['state']))
+                wb(**{a:vu.plot.plot([z_a[:,0], z_n[:,0]], [z_a[:,1], z_n[:,1]], show=False)})
 
-
-
-
+    run(episodes, **args.__dict__)

@@ -327,7 +327,6 @@ if __name__ == "__main__":
         
         for anom in anomalies:
             a_episode, labels = anom(episode['state'], ratio=0.05)
-            
             meta_f.write("----------------------------------------\n")
             meta_f.write(anom.__name__ + "\n")
             meta_f.write("   anomaly prob: {0}\n".format(0.05))
@@ -341,7 +340,12 @@ if __name__ == "__main__":
         meta_f.close()
 
     def generate_anomalies(env, *anomalies, prob=0.05):
-        
+        import datasets
+        #from pprint import pprint
+
+        dataset = datasets.dataset('aad.raw.{0}'.format(env))
+        #print(dataset.meta)
+
         len_episodes = len(load.files_raw(env))
         len_anomalies = len(anomalies)
         
@@ -350,15 +354,9 @@ if __name__ == "__main__":
         
         _anom = [a for anom in anomalies for a in [anom] * len_chunk]
         
-        meta_file = load.PATH_ANOMALY(env) + 'meta.txt'
-        meta_f = fu.save(meta_file, "{0}\n".format(env))
-        
-        columns_ = "{0:<16} {1:<20} {2:<20} {3:<6}\n"
-        
-        meta_f.write("INFO: anomaly prob: {0}".format(prob))
-        meta_f.write("--------------------------------------------------------------------------------\n")
-        meta_f.write(columns_.format('EPISODE', 'ANOMALY', 'SHAPE', 'A_COUNT'))
-        meta_f.write("--------------------------------------------------------------------------------\n")
+        meta = {**dataset.meta.__dict__, "anomaly":{a.__name__:[] for a in anomalies}}
+  
+        meta_file = load.PATH_ANOMALY(env) + 'meta.json'
         
         for i, fe in enumerate(load.load_raw(env)):
             file, base_episode = fe
@@ -367,18 +365,16 @@ if __name__ == "__main__":
             anom = _anom[i]
             
             episode, episode['label'] = anom(base_episode, ratio=prob)
-            
-            e_name = os.path.splitext(os.path.basename(file))[0]
-            a_count = np.sum(episode['label'])
-            meta_f.write(columns_.format(e_name, anom.__name__, str(episode['state'].shape), a_count))
-            #print(columns_.format(e_name, anom.__name__, str(episode['state'].shape), a_count)) 
-            
+            episode['label'] = episode['label'].astype(np.uint8)
+
+            meta["anomaly"][anom.__name__].append(os.path.splitext(os.path.basename(file))[0])
+
             fu.save(file.replace('raw', 'anomaly'), episode)
-            
-        meta_f.write("--------------------------------------------------------------------------------\n")
-        
-        meta_f.close()
-        
+
+        fu.save(meta_file, meta)
+
+
+
         #for file, episode in load.load_clean(env):
             
             #for anom in anomalies:
@@ -390,8 +386,8 @@ if __name__ == "__main__":
     import numpy as np
     anomalies = [fill, block, freeze, freeze_skip, split_horizontal, split_vertical, action]
     for env in load.ENVIRONMENTS:
-        for anom in ANOMALIES:
-            show_ca(env, anom)
+        #for anom in ANOMALIES:
+        #    show_ca(env, anom)
 
         #_, episode = next(load.load_raw(env))
         #a_episode1, labels = split_horizontal(episode['state'], ratio=0.05)
@@ -400,5 +396,5 @@ if __name__ == "__main__":
         #vu.play(a_episode)    
         #break
         
-        videos(env, *anomalies)
+        #videos(env, *anomalies)
         generate_anomalies(env, *anomalies)

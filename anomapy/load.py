@@ -10,6 +10,9 @@ from pprint import pprint
 from types import SimpleNamespace
 
 import numpy as np
+import torch
+import torch.nn.functional as F
+
 import re
 import os
 import gym
@@ -74,18 +77,26 @@ def files_anomaly(env):
     return fu.sort_files([file for file in fu.files(PATH_ANOMALY(env), full=True)])
 
 # --------------------- ACTION INFORMATION ----------------------- #
+#BeamRiderNoFrameskip-v4 ['NOOP', 'FIRE', 'UP', 'RIGHT', 'LEFT', 'UPRIGHT', 'UPLEFT', 'RIGHTFIRE', 'LEFTFIRE'] Discrete(9)
+#BreakoutNoFrameskip-v4 ['NOOP', 'FIRE', 'RIGHT', 'LEFT'] Discrete(4)
+#EnduroNoFrameskip-v4 ['NOOP', 'FIRE', 'RIGHT', 'LEFT', 'DOWN', 'DOWNRIGHT', 'DOWNLEFT', 'RIGHTFIRE', 'LEFTFIRE'] Discrete(9)
+#PongNoFrameskip-v4 ['NOOP', 'FIRE', 'RIGHT', 'LEFT', 'RIGHTFIRE', 'LEFTFIRE'] Discrete(6)
+#QbertNoFrameskip-v4 ['NOOP', 'FIRE', 'UP', 'RIGHT', 'LEFT', 'DOWN'] Discrete(6)
+#SeaquestNoFrameskip-v4 ['NOOP', 'FIRE', 'UP', 'RIGHT', 'LEFT', 'DOWN', 'UPRIGHT', 'UPLEFT', 'DOWNRIGHT', 'DOWNLEFT', 'UPFIRE', 'RIGHTFIRE', 'LEFTFIRE', 'DOWNFIRE', 'UPRIGHTFIRE', 'UPLEFTFIRE', 'DOWNRIGHTFIRE', 'DOWNLEFTFIRE'] Discrete(18)
+#SpaceInvadersNoFrameskip-v4 ['NOOP', 'FIRE', 'RIGHT', 'LEFT', 'RIGHTFIRE', 'LEFTFIRE'] Discrete(6)
+
 # Some of the actions in each game are redundant, we need to transform the actions to include only those that are distinct.
 action_transform = SimpleNamespace(**{BEAMRIDER:[], 
-                                    BREAKOUT:[],
-                                    ENDURO:[],
-                                    PONG:[0,0,1,2,1,2],
-                                    QBERT:[],
-                                    SEAQUEST:[],
-                                    SPACEINVADERS:[]})
+                                        BREAKOUT:[0,0,1,2], #
+                                        ENDURO:[],
+                                        PONG:[0,0,1,2,1,2],
+                                        QBERT:[],
+                                        SEAQUEST:[],
+                                        SPACEINVADERS:[]})
 
 #TODO change the name of this ...
-#ACTION_SHAPES = {k:len(np.unique(v)) for k,v in action_transform.__dict__.items()}
-ACTION_SHAPES = {BEAMRIDER:9, BREAKOUT:4, ENDURO:9, PONG:6, QBERT:6, SEAQUEST:18, SPACEINVADERS:6}
+ACTION_SHAPES = {k:len(np.unique(v)) for k,v in action_transform.__dict__.items()}
+#ACTION_SHAPES = {BEAMRIDER:9, BREAKOUT:4, ENDURO:9, PONG:6, QBERT:6, SEAQUEST:18, SPACEINVADERS:6}
 
 
 def __load__(files, *args):
@@ -127,19 +138,118 @@ def load_anomaly(env, anomaly=None, limit=None):
     else:
         return load(PATH_ANOMALY(env), 'state', 'action', 'label', limit=limit)
 
-def transform(episode, args):
-    states = episode['state'].astype(np.float32) / 255. #convert to CHW format
+
+from collections import namedtuple, defaultdict
+
+class anomaly_utils:
+
+    file_meta = namedtuple('file_meta', 'file anomaly shape a_count')
+    an_pair = namedtuple('an_pair', 'anomaly normal')
+
+    def __init__(self, **kwargs):
+        self.args = SimpleNamespace(**kwargs) #TODO RELIC, refactor this...
+    
+    def meta(self, full_path=True):
+        #pprint(self.args)
+        meta_f = fu.load(os.path.join(PATH_ANOMALY(self.args.env), 'meta.txt'))
+        lines = [line.split() for line in meta_f if 'episode' in line]
+        path = ('', PATH_ANOMALY(self.args.env))[int(full_path)]
+        meta_info = [anomaly_utils.file_meta(os.path.join(path, line[0]) + '.hdf5', line[1], eval("".join(line[2:6])), int(line[6])) for line in lines]
+        return meta_info
+
+    def meta_group(self, full_path=True):
+        meta = self.meta(full_path=full_path)
+        a_meta = defaultdict(list)
+        for m in meta:
+            a_meta[m.anomaly].append(m)
+        for a,m in a_meta.items():
+            yield a,m
+
+    def to_torch(self, x):
+        if isinstance(x, np.ndarray):
+            return torch.from_numpy(x)
+        elif isinstance(x, anomaly_utils.an_pair):
+            return anomaly_utils.an_pair(self.to_torch(x.anomaly), self.to_torch(x.normal))
+        elif isinstance(x, dict):
+            return {k:self.to_torch(v) for k,v in x.items()}
+        elif isinstance(x, list):
+            return [self.to_torch(v) for v in x]
+        else:
+            raise ValueError("invalid type: {0} cannot be converted to torch.".format(type(x)))
+
+    def load_anomaly(self, _meta):
+        print("---- loading anomaly episode: {0}".format(_meta.file))
+        _, episode =  next(__load__([_meta.file], 'state', 'action', 'label'))
+        episode = transform(episode, **self.args.__dict__)
+
+        if _meta.anomaly == 'action': #take special care of this, TODO fix the dataset so this can be removed
+            episode = fix_action_anomaly(_meta.file, episode, self.args)
+
+        return episode
+
+    def load_raw(self, _meta):
+        file = _meta.file.replace('anomaly', 'raw')
+        print("---- loading normal episode:  {0}".format(file))
+        _, episode = next(__load__([file], 'state', 'action'))
+        return transform(episode, **self.args.__dict__)
+
+    def load_both(self, _meta):
+        return anomaly_utils.an_pair(self.load_anomaly(_meta), self.load_raw(_meta))
+
+    def load_each(self):
+        return {a:self.load_both(m[0]) for a,m in self.meta_group()}
+
+def fix_action_anomaly(file, episode, args):
+    print("---- fixing action anomalies... TODO redo the dataset!")
+    #assume transform has been applied - the actions/labels will be updated in the dataset at some point, at which point this will be obsolete.
+    raw_file = file.replace('anomaly', 'raw')
+    _, raw_episode = next(__load__([raw_file], 'action'))
+    raw_actions = raw_episode['action']
+    raw_actions[-1] = 0 #remove last value which is always nan
+    raw_actions = remove_redundant_actions(raw_actions, args)[:, np.newaxis]
+    anom_actions = episode['action']
+
+    #if raw actions still differ after the transform, then anomaly, otherwise not!
+    episode['label'] = raw_actions.squeeze() != anom_actions.squeeze()
+
+    #print(episode['label'].shape, anom_actions.shape, raw_actions.shape)
+    #print(np.concatenate((anom_actions[:100], raw_actions[:100], episode['label'][:100, np.newaxis]), axis=1))
+
+    '''
+    #visualise
+    state = episode['state']
+    dif = state[:-1] - state[1:]
+    index = raw_actions[:-1].squeeze() == 2
+    dif[index] = 0
+    index = raw_actions[:-1].squeeze() == 1
+    dif[index] = 0
+    state = state[:-1][index]
+    #vu.play(vu.transform.HWC(np.concatenate((dif, state), axis=2)))
+    vu.play(vu.transform.HWC(dif), wait=100)
+    '''
+
+    return episode
+
+
+def remove_redundant_actions(actions, env):
+    return np.array(action_transform.__dict__[env], dtype=np.int64)[actions.astype(np.int64)]
+    
+#TODO move this
+def transform(episode, **kwargs):
+    if vu.transform.is_integer(episode['state']):
+        episode['state'] = vu.transform.to_float(episode['state'])
 
     #remove redundant actions and convert to int64
     episode['action'][-1] = 0 #remove last value which is always nan
-    #episode['action'] = np.array(action_transform.__dict__[args.env], dtype=np.int64)[episode['action'].astype(np.int64)][:,np.newaxis]
-    episode['action'] = episode['action'].astype(np.int64)[:,np.newaxis]
+    episode['action'] = remove_redundant_actions(episode['action'], kwargs['env'])[:,np.newaxis]
+    #episode['action'] = episode['action'].astype(np.int64)[:,np.newaxis]
 
-    if not args.colour:
-        states = vu.transform.gray(states)
-        if args.binary:
-            states = vu.transform.binary(states, args.binary_threshold)
-    episode['state'] = vu.transform.CHW(states)
+
+    if 'colour' in kwargs and not kwargs['colour']:
+        episode['state'] = vu.transform.gray(episode['state'])
+        if kwargs['binary']:
+            episode['state'] = vu.transform.binary(episode['state'], kwargs['binary_threshold'])
+    episode['state'] = vu.transform.CHW(episode['state'])
     return episode 
 
 
@@ -201,7 +311,6 @@ def load_autoencoder(args):
 
 def load_sssn(args):
     from pyworld.toolkit.nn.CNet import CNet2
-    print(args.state_shape)
     model = CNet2(args.state_shape, args.latent_shape).to(args.device)
     return __load_model__(model, args)
 
@@ -210,8 +319,13 @@ def load_sassn(args):
     from pyworld.toolkit.nn.MLP import MLP
     from pyworld.algorithms.optimise.TripletOptimiser import SASTripletOptimiser
 
+    #state_model = CNet2(args.state_shape, args.latent_shape).to(args.device)
+    #action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0]).to(args.device)
+    
     state_model = CNet2(args.state_shape, args.latent_shape).to(args.device)
-    action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0], args.latent_shape[0]).to(args.device)
+    action_model = MLP(args.latent_shape[0] * 2 + args.action_shape[0], args.latent_shape[0],
+                            output_activation=F.leaky_relu).to(args.device)
+
     model = SASTripletOptimiser.SASModel(state_model, action_model) #the model class is part of the optimiser
     return __load_model__(model, args)
 
@@ -219,15 +333,17 @@ MODEL = {'auto-encoder':load_autoencoder,
          'sssn':load_sssn,
          'sassn':load_sassn}
 
-def load_model(args):
-    
+DEFAULT_SAVE_PATH = os.path.split(os.path.split(__file__)[0])[0] #top level module dir
+assert DEFAULT_SAVE_PATH.endswith("anomapy") #YOU HAVE MOVE THE LOAD FILE OR RENAMED THE MODULE, THIS MIGHT CAUSE SOME SAVE/LOAD PROBLEMS!
+
+def load_model(**kwargs):
+    args = SimpleNamespace(**kwargs) #args is a relic, refactor this...
     try:
         if args.save_path is None:
-            args.save_path = os.getcwd()
+            args.save_path = DEFAULT_SAVE_PATH
     except:
-        print("---- warning: save_path arg was not found, using: {0}".format(str(os.getcwd())))
-        args.save_path = os.getcwd() #save path was not found, but is required!
-
+        args.save_path = DEFAULT_SAVE_PATH #save path was not found, but is required!
+        print("---- warning: save_path arg was not found, using: {0}".format(args.save_path))
 
     if not 'force' in args.__dict__:
         args.__dict__['force'] = False
@@ -236,31 +352,31 @@ def load_model(args):
 
     args.__dict__['run_path'] = args.save_path + "/runs/" + args.run
 
-    runs = wbu.get_runs(args.project)
-    runs = {run.name:run for run in wbu.get_runs(args.project)}
-    if args.run not in runs:
-        raise ValueError("Invalid run: please choose from valid runs include:\n" + "\n".join(runs.keys()))
-    
-    run = runs[args.run]
-    if not os.path.isdir(args.run_path) or args.force:
-        wbu.download_files(run, path = args.run_path) #by default the files wont be replaced if they are local
-    else:
+    #check if the run is local
+    if not args.force and os.path.isdir(args.run_path):
         print("-- local data found at {0}, skipping download.".format(args.run_path))
-    
-    print("-- loading model...")
+    else:
+        runs = wbu.get_runs(args.project)
+        runs = {run.name:run for run in wbu.get_runs(args.project)}
+        if args.run not in runs:
+            raise ValueError("Invalid run: please choose from valid runs include:\n" + "\n".join(runs.keys()))
+        wbu.download_files(runs[args.run], path = args.run_path, replace=args.force) #TODO force
 
+    print("-- loading model...")
     #find all models
     config = fu.load(args.run_path + "/config.yaml")
     print("-- found config:")
 
     args.__dict__.update({k:config[k]['value'] for k in config if isinstance(config[k], dict) and not k.startswith("_")})
-    args.__dict__.update(HYPER_PARAMETERS[args.env]) #if not colour these args are required for the data transform
 
+    if args.env in HYPER_PARAMETERS: #no hyperparams for this env
+        args.__dict__.update(HYPER_PARAMETERS[args.env]) #if not colour these args are required for the data transform
+    
     fix_old_config(args) #fix some old config problems
 
-    pprint(args.__dict__, indent=4)
+    #pprint(args.__dict__, indent=4)
 
     model, _ = MODEL[args.model](args)
 
-    return model
+    return model, args.__dict__
     

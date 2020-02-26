@@ -15,8 +15,8 @@ import pyworld.toolkit.tools.debugutils as debug
 
 from pyworld.toolkit.tools.wbutils import WB as wb_init
 
-def WB(model_name, model, args):
-    return wb_init('anomapy', model, id = "{0}-{1}-{2}".format(model_name, args.env, fu.file_datetime()), tags=[model_name], config={arg:getattr(args, arg) for arg in vars(args)})
+def WB(_model, **kwargs):
+    return wb_init('anomapy', _model, id = "{0}-{1}-{2}".format(kwargs['model'], kwargs['env'], fu.file_datetime()), tags=[kwargs['model']], config=kwargs)
 
 def initialise(model):
     if not model in load.MODEL:
@@ -33,7 +33,6 @@ def initialise(model):
 
     args = parser.parse_args()
 
-    print(args)
     args.__dict__['model'] = model
     args.__dict__.update(load.HYPER_PARAMETERS[args.env]) #update any hyper params that have not yet been given
 
@@ -58,7 +57,6 @@ def initialise(model):
 
     args.latent_shape = (args.latent_shape, )
 
-    print(args.state_shape)
     if args.colour:
         assert args.state_shape[0] == 3
     else:
@@ -66,41 +64,28 @@ def initialise(model):
 
     return episodes, args
 
-def states(episodes, test_episodes=1, shuffle=True):
-    assert test_episodes < len(episodes)
+def states(episodes, shuffle=True):
     print("-- preparing episodes...")
-    print("---- {0:<3} train episodes".format(len(episodes) - test_episodes))
-    print("---- {0:<3}  test episodes".format(test_episodes))
-    #only states are required
+    print("---- {0:<3} train episodes".format(len(episodes)))
     episodes = [e['state'] for e in episodes]
-    
     if shuffle:
-        for episode in episodes[-test_episodes]:
+        for episode in episodes:
             np.random.shuffle(episode)
-
     episodes = [torch.from_numpy(e) for e in episodes]
-
-    episode_test = episodes[-test_episodes] 
-    episodes = episodes[:-test_episodes]
-
     print("-- done.")
+    return episodes
 
-    return episodes, episode_test
-
-def states_actions(episodes, test_episodes=1, shuffle=True):
-    assert test_episodes < len(episodes)
+def states_actions(episodes):
     print("-- preparing episodes...")
-    print("---- {0:<3} train episodes".format(len(episodes) - test_episodes))
-    print("---- {0:<3}  test episodes".format(test_episodes))
+    print("---- {0:<3} train episodes".format(len(episodes)))
 
     states = [torch.from_numpy(e['state']) for e in episodes]
     actions = [e['action'] for e in episodes]
 
-    episode_test = list(zip([states[-test_episodes]], [actions[-test_episodes]]))
-    episodes =  list(zip(states[:-test_episodes], actions[:-test_episodes]))
+    episodes =  list(zip(states, actions))
 
     print("-- done.")
-    return episodes, episode_test
+    return episodes
 
 def load_mnist():
     x_train, _, x_test, _ = du.mnist()

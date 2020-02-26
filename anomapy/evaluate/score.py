@@ -123,6 +123,7 @@ class sassn:
         states = tu.to_torch(episode['state'])
         actions = du.onehot(episode['action'].astype(np.uint8), size=model.action_space.shape[0]) #make one-hot!
         actions = tu.to_torch(actions)
+        #print(actions[:100])
         
         model.eval()
         score = tu.collect(model.distance, states[:-1],  actions[:-1], states[1:])

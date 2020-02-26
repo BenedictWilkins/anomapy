@@ -75,9 +75,6 @@ def test_actions(env):
         policy = lambda _: i
         vu.play(gu.video(env, policy))
 
-test_actions(load.BREAKOUT)
+#action_meanings()
+#test_actions(load.BREAKOUT)
 
-
-'''
-
-'''
