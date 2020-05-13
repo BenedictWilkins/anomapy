@@ -2,6 +2,8 @@ from functools import wraps
 import numpy as np 
 import torch
 
+from types import SimpleNamespace
+
 import pyworld.toolkit.tools.datautils as du
 
 from pyworld.toolkit.tools.datautils.function import convolve1D_gauss
@@ -16,19 +18,18 @@ SUPRESS_WARNINGS = False
 def CHW_format(func):
 
     def _CHW(episode):
-        episode['state'] = CHW(episode['state'])
+        episode.state = CHW(episode.state)
         return episode
     def _HWC(episode):
-        episode['state'] = HWC(episode['state'])
+        episode.state = HWC(episode.state)
         return episode
     
     @wraps(func)
     def CHW_wrapper(episode, *args, **kwargs):
-        if isHWC(episode['state']):
+        if isHWC(episode.state):
             if not SUPRESS_WARNINGS:    
                 print("Warning: function \"{0}\" requires NCHW format, transforming from assumed NHWC format.".format(func.__name__))
-            e, *r = func(_CHW(episode), *args, **kwargs)
-            return (_HWC(e), *r)
+            return _HWC(func(_CHW(episode), *args, **kwargs))
         return func(episode)
 
     return CHW_wrapper
@@ -79,8 +80,8 @@ def freeze(episode, ratio=0.05, freeze_for=(4, 16)):
 
     episode = copy.deepcopy(episode)
 
-    state = episode['state']
-    action = episode['action']
+    state = episode.state
+    action = episode.action
 
     size = int(ratio * state.shape[0])
     a_indx = np.sort(np.random.choice(state.shape[0], size=size, replace=False))
@@ -96,18 +97,19 @@ def freeze(episode, ratio=0.05, freeze_for=(4, 16)):
         
     result.extend([k for k in range(j, state.shape[0])])
 
-    anomaly_index = np.zeros(state.shape[0], dtype=bool)
-    anomaly_index[a_indx] = True
+    anomaly_index = np.zeros(state.shape[0], dtype=np.uint8)
+    anomaly_index[a_indx] = 1
 
-    episode['state'] = state[result]
-    episode['action'] = action[result]
+    episode.state = state[result]
+    episode.action = action[result]
 
-    assert episode['action'].shape[0] == episode['state'].shape[0] #sanity check
+    assert episode.action.shape[0] == episode.state.shape[0] #sanity check
 
     anomaly_index = anomaly_index[result]
-    anomaly_index[a_indx + np.cumsum(freeze_for) - freeze_for] = False #the first frame of a freeze is not an anomaly
+    anomaly_index[a_indx + np.cumsum(freeze_for) - freeze_for] = 0 #the first frame of a freeze is not an anomaly
+    tlabels = anomaly_index[1:]
 
-    return episode, anomaly_index
+    return SimpleNamespace(**episode.__dict__, label=anomaly_index, tlabel=tlabels)
 
 def freeze_skip(episode, ratio=0.05, freeze_for=(4, 16)):
     '''
@@ -129,25 +131,32 @@ def freeze_skip(episode, ratio=0.05, freeze_for=(4, 16)):
     assert freeze_for[0] < freeze_for[1]
     
     episode = copy.deepcopy(episode)
-    state = episode['state']
+    state = episode.state
 
     size = int(ratio * state.shape[0])
     a_indx = np.sort(np.random.choice(state.shape[0], size=size, replace=False))
     freeze_for = np.random.randint(low=freeze_for[0], high=freeze_for[1], size=a_indx.shape[0])
+
+    #avoid overlapping freezes (causes problems for tlabel) 
+    delete = np.arange(a_indx.shape[0]-1)[np.greater(freeze_for[:-1], a_indx[1:] - a_indx[:-1])]
+    a_indx = np.delete(a_indx[:-1], delete)
+    freeze_for = np.delete(freeze_for[:-1], delete)
     freeze_frames = state[a_indx]
-    #freeze_frames_a = action[a_indx]
     
-    anomaly_index = np.zeros(state.shape[0], dtype=bool)
+    labels = np.zeros(state.shape[0], dtype=np.uint8)
+    tlabels = np.zeros(state.shape[0] + 16, dtype=np.uint8)
+    tlabels[(a_indx + freeze_for - 1).astype(np.uint64)] = 1
+    tlabels = tlabels[:state.shape[0] - 1]
 
     for i in range(a_indx.shape[0]):
         state[a_indx[i]+1:a_indx[i] + freeze_for[i]] = freeze_frames[i] #first frame of freeze is already filled...
         #action[a_indx[i]+1:a_indx[i] + freeze_for[i]] = freeze_frames_a[i] #??? we want to repeat the action? or leave it?
 
-        anomaly_index[a_indx[i]+1:a_indx[i] + freeze_for[i]] = True
+        labels[a_indx[i]+1:a_indx[i] + freeze_for[i]] = 1
     
-    assert episode['action'].shape[0] == episode['state'].shape[0] #sanity check
+    assert episode.action.shape[0] == episode.state.shape[0] #sanity check
 
-    return episode, anomaly_index
+    return SimpleNamespace(**episode.__dict__, label=labels, tlabel=tlabels)
     
 def split_horizontal(episode, ratio=0.05):
     return split(episode, ratio=ratio, vertical=False, horizontal=True)
@@ -170,7 +179,7 @@ def split(episode, ratio=0.05, vertical=False, horizontal=True):
     assert vertical or horizontal
 
     episode = copy.deepcopy(episode)
-    state = episode['state']
+    state = episode.state
 
     size = int(ratio * state.shape[0]) 
     indx = np.random.choice(state.shape[0], size=size, replace=False)
@@ -188,13 +197,13 @@ def split(episode, ratio=0.05, vertical=False, horizontal=True):
             state[i1,:,slice[np.random.randint(0,2)],:] = state[i2,:,slice[np.random.randint(0,2)],:]
 
     anom_indx = indx[:,0]
-    labels = np.zeros(state.shape[0], dtype=bool)
-    labels[anom_indx] = True
-
-    return episode, labels
+    labels = np.zeros(state.shape[0], dtype=np.uint8)
+    labels[anom_indx] = 1
+    tlabels = np.logical_or(labels[:-1], labels[1:]).astype(np.uint8)
+    return SimpleNamespace(**episode.__dict__, label=labels, tlabel=tlabels)
 
 @CHW_format
-def fill(episode, ratio=0.05, colour=None, duration=(1,5)):
+def flicker(episode, ratio=0.05, colour=None, duration=(1,5)):
     '''
         Fills the entire frame with a given colour for a number of frames. 
 
@@ -207,7 +216,7 @@ def fill(episode, ratio=0.05, colour=None, duration=(1,5)):
             episode, labels (0 = normal, 1 = anomaly)
     '''
     episode = copy.deepcopy(episode)
-    state = episode['state']
+    state = episode.state
 
     if colour is not None:
         assert state.shape[1] == len(colour)
@@ -219,19 +228,20 @@ def fill(episode, ratio=0.05, colour=None, duration=(1,5)):
     a_indx = np.sort(np.random.choice(state.shape[0], size=size, replace=False))
     fill_for = np.random.randint(low=duration[0], high=duration[1], size=a_indx.shape[0])
 
-    labels = np.zeros(state.shape[0], dtype=bool)
+    labels = np.zeros(state.shape[0], dtype=np.uint8)
 
     for i in range(a_indx.shape[0]):
         state[a_indx[i]:a_indx[i] + fill_for[i]] = colour
-        labels[a_indx[i]:a_indx[i] + fill_for[i]] = True
-        
-    return episode, labels
+        labels[a_indx[i]:a_indx[i] + fill_for[i]] = 1
+
+    tlabels = np.abs(labels[:-1].astype(np.int8) - labels[1:].astype(np.int8))
+    return SimpleNamespace(**episode.__dict__, label=labels, tlabel=tlabels)
 
 @CHW_format
 def fade(episode, ratio=0.05, colour=None, sigma=1., kernel_size=5):
         
     episode = copy.deepcopy(episode)
-    state = episode['state']
+    state = episode.state
 
     if colour is not None:
         assert state.shape[1] == len(colour)
@@ -247,11 +257,11 @@ def fade(episode, ratio=0.05, colour=None, sigma=1., kernel_size=5):
     
     dif = colour - state
 
-    episode['state'] = state + signal * dif
+    episode.state = state + signal * dif
 
     labels = (signal[:,0,0,0] > 0.05) #maybe change this value...?
     
-    return episode, labels
+    return SimpleNamespace(**episode.__dict__, label=labels)
    
 @CHW_format
 def block(episode, ratio=0.1):
@@ -262,11 +272,11 @@ def block(episode, ratio=0.1):
             episode: NCHW format to generate anomalies in (a copy will be made). 
             ratio: of anomalous to normal examples i.e. ratio * len(episode) anomalies will be generated
         Returns:
-            episode, normal index, anomaly index
+            episode
     '''
         
     episode = copy.deepcopy(episode)
-    state = episode['state']
+    state = episode.state
 
     size = int(ratio * state.shape[0]) 
     anom_indx = np.random.choice(state.shape[0], size=size, replace=False)
@@ -282,10 +292,11 @@ def block(episode, ratio=0.1):
         for j in range(state.shape[1]):
             state[i,j,min(y1, y2):max(y1, y2),min(x1, x2):max(x1, x2)] = random()
         
-    labels = np.zeros(state.shape[0], dtype=bool)
-    labels[anom_indx] = True
+    labels = np.zeros(state.shape[0], dtype=np.uint8)
+    labels[anom_indx] = 1
+    tlabels = np.logical_or(labels[:-1], labels[1:]).astype(np.uint8)
         
-    return episode, labels
+    return SimpleNamespace(**episode.__dict__, label=labels, tlabel=tlabels)
 
 # ==================================================================================
 
@@ -293,11 +304,11 @@ FREEZE = freeze.__name__
 FREEZE_SKIP = freeze_skip.__name__
 SPLIT_HORIZONTAL = split_horizontal.__name__
 SPLIT_VERTICAL = split_vertical.__name__
-FILL = fill.__name__
+FLICKER = flicker.__name__
 BLOCK = block.__name__
 ACTION = action.__name__
 
-ANOMALIES = [ACTION, FILL, BLOCK, FREEZE, FREEZE_SKIP, SPLIT_HORIZONTAL, SPLIT_VERTICAL]
+ANOMALIES = [ACTION, FLICKER, BLOCK, FREEZE, FREEZE_SKIP, SPLIT_HORIZONTAL, SPLIT_VERTICAL]
 
 # ==================================================================================
  
@@ -341,6 +352,7 @@ if __name__ == "__main__":
 
     def generate_anomalies(env, *anomalies, prob=0.05):
         import datasets
+        from pprint import pprint
         #from pprint import pprint
 
         dataset = datasets.dataset('aad.raw.{0}'.format(env))
@@ -350,14 +362,16 @@ if __name__ == "__main__":
         len_anomalies = len(anomalies)
         
         len_chunk = int(len_episodes / 10)
-        print("episodes: {0}, anomalies: {1}, chunking: {2}".format(len_episodes, len_anomalies, len_chunk))
+        print("{0:16}: episodes: {1:4}, anomalies: {2:4}, chunking: {3:4}".format(env, len_episodes, len_anomalies, len_chunk))
         
         _anom = [a for anom in anomalies for a in [anom] * len_chunk]
         
         meta = {**dataset.meta.__dict__, "anomaly":{a.__name__:[] for a in anomalies}}
   
         meta_file = load.PATH_ANOMALY(env) + 'meta.json'
+        pprint(meta)
         
+        '''
         for i, fe in enumerate(load.load_raw(env)):
             file, base_episode = fe
             if i >= len(_anom):
@@ -373,7 +387,7 @@ if __name__ == "__main__":
 
         fu.save(meta_file, meta)
 
-
+        '''
 
         #for file, episode in load.load_clean(env):
             

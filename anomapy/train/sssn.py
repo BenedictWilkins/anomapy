@@ -1,6 +1,7 @@
 from pyworld.algorithms.optimise.TripletOptimiser import SSTripletOptimiser, mode as optim_mode
 from pyworld.toolkit.nn.CNet import CNet2
 
+import pyworld.toolkit.tools.wbutils as wbu
 import pyworld.toolkit.tools.gymutils as gu
 import pyworld.toolkit.tools.fileutils as fu
 import pyworld.toolkit.tools.visutils as vu
@@ -14,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import argparse
+import copy
 
 
 from types import SimpleNamespace
@@ -23,44 +25,84 @@ from .. import load
 from . import initialise
 from ..evaluate import evaluate
 
-OPTIM_HYPERPARAMS = {"optim_mode":optim_mode.all,
-                     "optim_margin":0.2,
-                     "optim_k":16,
-                     "optim_lr":0.0005}
+from . import utils
 
-def default_config(env, shape, **kwargs):
-    return dict(env=env, model='sssn', latent_shape=2, state_shape=shape, action_shape=None, epochs=10, 
-                batch_size=64, device=tu.device(), colour=True, **OPTIM_HYPERPARAMS, **kwargs)
+import datasets
 
-def run(episodes, debug=False, save_every=4, **kwargs):
-    print("-- initialising model...")
-    model = CNet2(kwargs['state_shape'], kwargs['latent_shape']).to(kwargs['device'])
-    optim = SSTripletOptimiser(model, mode=kwargs['optim_mode'], margin=kwargs['optim_margin'], k=kwargs['optim_k'], lr=kwargs['optim_lr'])
-    print("-- done.")
+DEFAULT_CONFIG = dict(model='sssn', latent_shape=2,
+                      epochs=10, batch_size=64, device=tu.device(False),
+                      optim_mode=optim_mode.all, optim_margin=0.2, 
+                      optim_k=16, optim_lr=0.0005)
 
-    wb = initialise.WB(model, **kwargs)
-    print("--- training... ")
+def default_config():
+    return copy.deepcopy(DEFAULT_CONFIG)
 
-    with wb:
-        for e in range(1, kwargs['epochs'] + 1):
-            #monitoring...
-            #wb(roc = evaluator.roc_plot())
+def new(**config):
 
-            #each episode
-            for episode in episodes:
-                for batch in du.batch_iterator(episode[:-1], episode[1:], batch_size=kwargs['batch_size'], shuffle=True):
-                    batch_state, batch_next_state = batch
-                    optim(batch_state, batch_next_state)
+    _config = default_config()
+    _config.update(config)
+    config = _config
 
-                    if wb.step() % 100:
-                        wb(**optim.cma.recent())
-                        if debug:
-                            plot_eval(model, wb)
+    model = CNet2(config['state']['shape'], config['latent_shape']).to(config['device'])
+    optim = SSTripletOptimiser(model, mode=config['optim_mode'], margin=config['optim_margin'], k=config['optim_k'], lr=config['optim_lr'])
 
-                print("--- epoch:", e, optim.cma())
+    config["model_class"] = model.__class__.__name__
+    config["optim_class"] = optim.__class__.__name__
 
-            if not e % save_every:
-                wb.save(overwrite=False)
+    return optim
+
+def model(**config):
+    return CNet2(config['state']['shape'], config['latent_shape']).to(config['device'])
+
+def optimiser(**config):
+    return SSTripletOptimiser(model(**config), mode=config['optim_mode'], margin=config['optim_margin'], k=config['optim_k'], lr=config['optim_lr'])
+
+def distance(model, episode, batch_size=256):
+    model.eval()
+    z = tu.collect(model, episode, batch_size=batch_size) #how much memory has the gpu got?!
+    model.train()
+    #L22 distance by default? TODO give some other options for this
+    d = ((z[:-1] - z[1:]) ** 2).sum(1)
+    return z, d
+
+def encode(model, episode, batch_size=256):
+    model.eval()
+    z = tu.collect(model, episode, batch_size=batch_size) #how much memory has the gpu got?!
+    model.train()
+    return z
+
+
+
+def epoch(optimiser, episode, batch_size=64):
+    for batch in du.batch_iterator(episode[:-1], episode[1:], batch_size=batch_size, shuffle=True):
+        batch_state, batch_next_state = batch
+        optimiser(batch_state, batch_next_state)
+        yield optimiser.cma.recent()
+
+
+def run(optimiser, episodes, debug=False, save_every=4, **kwargs):
+
+    for e in range(1, kwargs['epochs'] + 1):
+        #monitoring...
+        #wb(roc = evaluator.roc_plot())
+
+        #each episode
+        for episode in episodes:
+            for batch in du.batch_iterator(episode[:-1], episode[1:], batch_size=kwargs['batch_size'], shuffle=True):
+                batch_state, batch_next_state = batch
+                optim(batch_state, batch_next_state)
+                yield optim.cma.recent()
+
+                
+                if wb.step() % 100:
+                    wb(**optim.cma.recent())
+                    if debug:
+                        plot_eval(model, wb)
+
+            print("--- epoch:", e, optim.cma())
+
+        if not e % save_every:
+            wb.save(overwrite=False)
     
     print("\n\n\n\n", flush=True)
     return model
